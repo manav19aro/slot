@@ -39,3 +39,32 @@ fn a_toast_goes_away_on_its_own() {
     a.tick_ms(1_000 + HUD_MS);
     assert_eq!(a.toast(), None);
 }
+
+#[test]
+fn achievement_notifications_show_and_expire() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut app = app_playing_in(d.path(), "Emerald");
+    app.achievement_notification(false);
+    assert_eq!(app.toast(), Some(Toast::AchievementUnlocked));
+    app.tick_ms(app.now() + Toast::AchievementUnlocked.hold_ms());
+    assert_eq!(app.toast(), None);
+    app.achievement_notification(true);
+    assert_eq!(app.toast(), Some(Toast::AchievementsStopped));
+}
+
+#[test]
+fn unlock_notices_keep_the_name_and_replace_it_for_each_award() {
+    let d = tmp_root_with_carts(&["Emerald"]);
+    let mut app = app_playing_in(d.path(), "Emerald");
+    for title in ["First achievement", "Second achievement"] {
+        app.achievement_unlocked(slot_ui::AchievementNotice {
+            title: title.into(),
+            badge: None,
+        });
+        assert_eq!(app.achievement_notice().unwrap().title, title);
+        app.tick_ms(app.now() + Toast::AchievementUnlocked.hold_ms());
+        assert!(app.achievement_notice().is_none());
+    }
+    app.achievement_notification(true);
+    assert!(app.achievement_notice().is_none());
+}

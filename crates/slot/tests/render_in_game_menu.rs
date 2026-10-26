@@ -82,7 +82,7 @@ fn the_in_game_menu_darkens_the_game_and_screen_leaves_it_bare() {
     run_for(&mut f, &mut input, 0.4);
     assert_eq!(f.app().in_game_menu(), Some(QuickRow::Resume));
     let top = composed(&mut f, &mut c, "top");
-    for btn in [Btn::Down, Btn::A, Btn::A] {
+    for btn in [Btn::Down, Btn::Down, Btn::A, Btn::A] {
         tap(&mut f, &mut input, btn);
     }
     run_for(&mut f, &mut input, 0.3);
@@ -167,7 +167,7 @@ fn the_brightness_rows_render_on_the_screen_page() {
     run_for(&mut f, &mut input, 4.0);
     tap(&mut f, &mut input, Btn::Menu);
     run_for(&mut f, &mut input, 0.5);
-    for btn in [Btn::Down, Btn::A, Btn::A] {
+    for btn in [Btn::Down, Btn::Down, Btn::A, Btn::A] {
         tap(&mut f, &mut input, btn);
     }
     while f.app().in_game_menu() != Some(QuickRow::PlayBrightness) {
@@ -264,7 +264,7 @@ fn the_controls_page_renders() {
     run_for(&mut f, &mut input, 4.0);
     tap(&mut f, &mut input, Btn::Menu);
     run_for(&mut f, &mut input, 0.5);
-    for btn in [Btn::Down, Btn::A, Btn::Down, Btn::Down, Btn::A] {
+    for btn in [Btn::Down, Btn::Down, Btn::A, Btn::Down, Btn::Down, Btn::A] {
         tap(&mut f, &mut input, btn);
     }
     run_for(&mut f, &mut input, 0.3);
@@ -290,4 +290,38 @@ fn the_controls_page_renders() {
     tap(&mut f, &mut input, Btn::Up);
     run_for(&mut f, &mut input, 0.2);
     composed(&mut f, &mut c, "controls-bound");
+}
+
+#[test]
+#[ignore = "requires macOS OpenGL context"]
+fn achievement_browser_uploads_its_face_after_opening_during_gameplay() {
+    let surface = HeadlessSurface::new().expect("macOS OpenGL context required");
+    let mut compositor = Compositor::new(&surface).expect("OpenGL compositor required");
+    let directory = tmp_root_with_carts(&["Emerald"]);
+    clocked(directory.path());
+    let mut frontend = Frontend::boot(Box::new(SimPlatform::at(directory.path().to_path_buf())));
+    frontend.upload_faces(&mut compositor);
+    let mut input = Script(VecDeque::new());
+    tap(&mut frontend, &mut input, Btn::A);
+    run_for(&mut frontend, &mut input, 4.0);
+    tap(&mut frontend, &mut input, Btn::Menu);
+    run_for(&mut frontend, &mut input, 0.4);
+    for _ in 0..8 {
+        if frontend.app().in_game_menu() == Some(QuickRow::Achievements) {
+            break;
+        }
+        tap(&mut frontend, &mut input, Btn::Down);
+    }
+    assert_eq!(frontend.app().in_game_menu(), Some(QuickRow::Achievements));
+    tap(&mut frontend, &mut input, Btn::A);
+    assert!(frontend.app().achievement_view().is_some());
+    let image = composed(&mut frontend, &mut compositor, "achievements");
+    let heading_ink = (12..48)
+        .flat_map(|y| (20..620).map(move |x| (x, y)))
+        .filter(|(x, y)| bright(at(&image, *x, *y)) > 500)
+        .count();
+    assert!(
+        heading_ink > 100,
+        "browser texture was not uploaded after startup"
+    );
 }

@@ -52,6 +52,9 @@ pub fn hint_row(legend: &[(&'static str, &'static str)]) -> Vec<Hint> {
 }
 
 pub fn cap_width(key: &str) -> u32 {
+    if key.chars().count() == 1 {
+        return CAP;
+    }
     let Some(font) = text::label_font() else {
         return CAP;
     };
@@ -62,6 +65,23 @@ pub fn cap_width(key: &str) -> u32 {
         .map(|l| text::line_width(font, l, layout.px, layout.tracking))
         .fold(0.0, f32::max);
     CAP.max(ink.ceil() as u32 + 2 * CAP_PAD)
+}
+
+// Single buttons are circles; wider names share the same radius as capsules.
+fn cap_background(w: u32) -> Vec<u8> {
+    let mut rgba = vec![0; (w * CAP * 4) as usize];
+    let radius = CAP as f32 / 2.0;
+    for y in 0..CAP {
+        for x in 0..w {
+            let px = x as f32 + 0.5;
+            let dx = px - px.clamp(radius, w as f32 - radius);
+            let dy = y as f32 + 0.5 - radius;
+            let alpha = ((radius + 0.5 - dx.hypot(dy)).clamp(0.0, 1.0) * 255.0).round() as u8;
+            let at = ((y * w + x) * 4) as usize;
+            rgba[at..at + 4].copy_from_slice(&[INK[0], INK[1], INK[2], alpha]);
+        }
+    }
+    rgba
 }
 
 pub fn hint_width(key: &str, label: &str) -> u32 {
@@ -77,10 +97,7 @@ pub fn hint_coloured(key: &str, label: &str, ink: [u8; 3]) -> UndoFace {
     let mut rgba = vec![0u8; (w * HINT_H * 4) as usize];
 
     let cap_w = cap_width(key);
-    let mut cap = Vec::with_capacity((cap_w * CAP * 4) as usize);
-    for _ in 0..cap_w * CAP {
-        cap.extend_from_slice(&[INK[0], INK[1], INK[2], 255]);
-    }
+    let mut cap = cap_background(cap_w);
     if let Some(font) = text::label_font() {
         let layout = text::fit(font, key, cap_w as f32, 1, KEY_PX, KEY_PX);
         text::draw_centred(&mut cap, cap_w, CAP, &layout, CAP_INK);
@@ -269,10 +286,7 @@ pub fn arrows_hint_coloured(label: &str, ink: [u8; 3]) -> UndoFace {
 }
 
 fn glyph_cap(glyph: char) -> Vec<u8> {
-    let mut cap = Vec::with_capacity((CAP * CAP * 4) as usize);
-    for _ in 0..CAP * CAP {
-        cap.extend_from_slice(&[INK[0], INK[1], INK[2], 255]);
-    }
+    let mut cap = cap_background(CAP);
     let Some(font) = crate::icon::symbols_font() else {
         return cap;
     };
@@ -306,7 +320,15 @@ pub fn pad_hint_width(label: &str) -> u32 {
 pub fn pad_hint_face(label: &str) -> UndoFace {
     let w = pad_hint_width(label);
     let mut rgba = vec![0u8; (w * HINT_H * 4) as usize];
-    blit(&mut rgba, w, &glyph_cap(PAD_GLYPH), CAP, CAP, 0, (HINT_H - CAP) / 2);
+    blit(
+        &mut rgba,
+        w,
+        &glyph_cap(PAD_GLYPH),
+        CAP,
+        CAP,
+        0,
+        (HINT_H - CAP) / 2,
+    );
     let text_w = band_width(label);
     let mut band = vec![0u8; (text_w * HINT_H * 4) as usize];
     if let Some(font) = text::label_font() {

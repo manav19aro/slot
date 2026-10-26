@@ -37,7 +37,29 @@ pub fn fit_box(
     max_px: f32,
     min_px: f32,
 ) -> Layout {
-    let upper = text.to_uppercase();
+    fit_box_inner(font, text, max_w, max_h, max_lines, max_px, min_px, true)
+}
+
+pub(crate) fn fit_literal(font: &Font, text: &str, max_w: f32, max_h: f32, px: f32) -> Layout {
+    fit_box_inner(font, text, max_w, max_h, 1, px, 14.0, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fit_box_inner(
+    font: &Font,
+    text: &str,
+    max_w: f32,
+    max_h: f32,
+    max_lines: usize,
+    max_px: f32,
+    min_px: f32,
+    uppercase: bool,
+) -> Layout {
+    let upper = if uppercase {
+        text.to_uppercase()
+    } else {
+        text.to_owned()
+    };
     let mut px = max_px;
     while px > min_px {
         let tracking = tracking_for(px);
@@ -76,6 +98,14 @@ pub fn draw_centred(dst: &mut [u8], dst_w: u32, dst_h: u32, layout: &Layout, col
 }
 
 pub fn coverage(dst_w: u32, dst_h: u32, layout: &Layout) -> Vec<u8> {
+    coverage_aligned(dst_w, dst_h, layout, true)
+}
+
+pub(crate) fn coverage_left(dst_w: u32, dst_h: u32, layout: &Layout) -> Vec<u8> {
+    coverage_aligned(dst_w, dst_h, layout, false)
+}
+
+fn coverage_aligned(dst_w: u32, dst_h: u32, layout: &Layout, centred: bool) -> Vec<u8> {
     let mut out = vec![0u8; (dst_w * dst_h) as usize];
     let Some(font) = label_font() else { return out };
     let Some(vm) = font.horizontal_line_metrics(layout.px) else {
@@ -86,7 +116,11 @@ pub fn coverage(dst_w: u32, dst_h: u32, layout: &Layout) -> Vec<u8> {
     let mut baseline = (dst_h as f32 - block_h) / 2.0 + vm.ascent;
 
     for line in &layout.lines {
-        let mut pen = (dst_w as f32 - line_width(font, line, layout.px, layout.tracking)) / 2.0;
+        let mut pen = if centred {
+            (dst_w as f32 - line_width(font, line, layout.px, layout.tracking)) / 2.0
+        } else {
+            0.0
+        };
         for ch in line.chars() {
             let (m, cov) = font.rasterize(ch, layout.px);
             stamp(

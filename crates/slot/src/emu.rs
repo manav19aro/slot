@@ -5,6 +5,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::achievements::{
+    AchievementEvent, AchievementSession, Events, LocalAchievement, ProgressConfig,
+};
 use crate::cable::{self, Cable};
 use slot_retro::{
     ButtonMask, Link, LinkChannel, RetroCore, Rumble, GBA_H, GBA_W, NETPACKET_RELIABLE,
@@ -76,6 +79,16 @@ pub struct EmuHandle {
 }
 
 enum Cmd {
+    AchievementProgress(Sender<Vec<(u32, String)>>),
+    ImportAchievements(
+        slot_achievements::download::Imported,
+        Sender<Result<usize, String>>,
+    ),
+    Achievements(
+        Vec<LocalAchievement>,
+        Option<ProgressConfig>,
+        Sender<Result<(), String>>,
+    ),
     Load(Vec<u8>),
     Save(Sender<Vec<u8>>),
     Sav(Sender<Option<Vec<u8>>>),
@@ -88,6 +101,7 @@ enum Cmd {
 }
 
 struct Shared {
+    achievement_events: Events,
     input: AtomicU16,
     speed: AtomicU8,
     observed: AtomicU8,
@@ -163,6 +177,7 @@ impl EmuHandle {
         let link = core.net();
         let frames = Frames::new((GBA_W * GBA_H * 4) as usize);
         let shared = Arc::new(Shared {
+            achievement_events: Arc::new(Mutex::new(Vec::new())),
             input: AtomicU16::new(0),
             speed: AtomicU8::new(Speed::Paused as u8),
             observed: AtomicU8::new(Speed::Paused as u8),
@@ -214,6 +229,77 @@ impl EmuHandle {
             rumble,
             link,
         }
+    }
+
+    /// Installs locally supplied rules for this GBA/mGBA game. Call before
+    /// unpausing for complete tracking. No download or account access occurs.
+    /// An empty set disables evaluation; replacement starts fresh progress.
+    pub fn achievement_progress(&self) -> Receiver<Vec<(u32, String)>> {
+        let (tx, rx) = channel();
+        request(&self.cmds, &self.shared, Cmd::AchievementProgress(tx));
+        rx
+    }
+
+    pub fn set_gba_achievements(
+        &self,
+        rules: Vec<LocalAchievement>,
+    ) -> Receiver<Result<(), String>> {
+        let (tx, rx) = channel();
+        request(&self.cmds, &self.shared, Cmd::Achievements(rules, None, tx));
+        rx
+    }
+
+    /// Enables durable local unlocks for this exact game before unpausing.
+    pub fn import_achievements(
+        &self,
+        imported: slot_achievements::download::Imported,
+    ) -> Receiver<Result<usize, String>> {
+        let (tx, rx) = channel();
+        request(
+            &self.cmds,
+            &self.shared,
+            Cmd::ImportAchievements(imported, tx),
+        );
+        rx
+    }
+
+    pub fn set_persistent_gba_achievements(
+        &self,
+        rules: Vec<LocalAchievement>,
+        progress: ProgressConfig,
+    ) -> Receiver<Result<(), String>> {
+        let (tx, rx) = channel();
+        request(
+            &self.cmds,
+            &self.shared,
+            Cmd::Achievements(rules, Some(progress), tx),
+        );
+        rx
+    }
+
+    /// Pops one local notification while retaining later events until the UI is
+    /// ready. Persistent sessions save unlocks before emitting success events.
+    pub fn next_achievement_event(&self) -> Option<AchievementEvent> {
+        let mut events = self
+            .shared
+            .achievement_events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if events.is_empty() {
+            None
+        } else {
+            Some(events.remove(0))
+        }
+    }
+
+    pub fn take_achievement_events(&self) -> Vec<AchievementEvent> {
+        std::mem::take(
+            &mut *self
+                .shared
+                .achievement_events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        )
     }
 
     pub fn rumble(&self) -> &Rumble {
@@ -580,6 +666,7 @@ impl Worker {
             .store(CoreState::Ready as u8, Ordering::Release);
         eprintln!("slot: emu: ready at {:.1} ms", crate::boot_time::ms());
 
+        let mut achievements = AchievementSession::new(self.shared.achievement_events.clone());
         let mut out = Vec::new();
         let mut gated = (false, false);
         let rewind = RewindThread::spawn(REWIND_BYTES);
@@ -605,7 +692,14 @@ impl Worker {
         let mut ff = (0u32, 0u32, Duration::ZERO, Instant::now());
         while !self.shared.stop.load(Ordering::Relaxed) {
             for cmd in self.cmds.try_iter() {
-                self.apply(cmd, core.as_mut(), &mut transport, &mut cable, &link);
+                self.apply(
+                    cmd,
+                    core.as_mut(),
+                    &mut transport,
+                    &mut cable,
+                    &link,
+                    &mut achievements,
+                );
             }
 
             if let Some(t) = transport.as_mut() {
@@ -681,6 +775,7 @@ impl Worker {
                 Speed::Fast => self.shared.fast_steps.load(Ordering::Relaxed),
             };
             if rewinding {
+                achievements.reset_progress();
                 if let Some(state) = rewind.pop() {
                     if let Err(e) = core.unserialize(&state) {
                         eprintln!("slot: rewind: {e}");
@@ -752,6 +847,12 @@ impl Worker {
                             }
                         }
                         None => core.run_frame(input),
+                    }
+                    // Only committed single-player frames reach the evaluator.
+                    // Refresh and rewind frames have separate paths. Fast-forward
+                    // is evaluated here on every step, not just presented frames.
+                    if transport.is_none() && self.player.is_none() {
+                        achievements.frame(core.as_mut());
                     }
                     let took = frame_began.elapsed();
                     if last {
@@ -871,7 +972,14 @@ impl Worker {
                         }
                         Wait::Request => {
                             for cmd in self.cmds.try_iter() {
-                                self.apply(cmd, core.as_mut(), &mut transport, &mut cable, &link);
+                                self.apply(
+                                    cmd,
+                                    core.as_mut(),
+                                    &mut transport,
+                                    &mut cable,
+                                    &link,
+                                    &mut achievements,
+                                );
                             }
                             continue;
                         }
@@ -894,7 +1002,14 @@ impl Worker {
             }
         }
         for cmd in self.cmds.try_iter() {
-            self.apply(cmd, core.as_mut(), &mut transport, &mut cable, &link);
+            self.apply(
+                cmd,
+                core.as_mut(),
+                &mut transport,
+                &mut cable,
+                &link,
+                &mut achievements,
+            );
         }
         ring.set_muted(false);
         ring.set_idle(false);
@@ -911,8 +1026,34 @@ impl Worker {
         transport: &mut Option<Box<dyn LinkChannel>>,
         cable: &mut Option<Cable>,
         link: &Link,
+        achievements: &mut AchievementSession,
     ) {
         match cmd {
+            Cmd::AchievementProgress(reply) => {
+                let _ = reply.send(achievements.measured_progress());
+            }
+            Cmd::ImportAchievements(imported, reply) => {
+                let _ = reply.send(achievements.import_unlocks(&imported));
+            }
+            Cmd::Achievements(rules, progress, reply) => {
+                let result = if !rules.is_empty() && (self.player.is_some() || transport.is_some())
+                {
+                    Err("achievement evaluation currently supports single-player GBA only".into())
+                } else {
+                    achievements.install(rules, progress)
+                };
+                if let Err(error) = &result {
+                    eprintln!("slot: achievement rules refused: {error}");
+                    if !achievements.active() {
+                        self.shared
+                            .achievement_events
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(AchievementEvent::EvaluationStopped(error.clone()));
+                    }
+                }
+                let _ = reply.send(result);
+            }
             Cmd::Save(reply) => match core.serialize() {
                 Ok(state) => {
                     let _ = reply.send(self.for_card(state));
@@ -920,6 +1061,7 @@ impl Worker {
                 Err(e) => eprintln!("slot: {e}"),
             },
             Cmd::Load(state) => {
+                achievements.reset_progress();
                 if let Err(e) = core.unserialize(&self.for_core(state)) {
                     eprintln!("slot: {e}");
                 }
@@ -933,6 +1075,7 @@ impl Worker {
                     self.publish(core.video_xrgb8888());
                     let _ = core.take_audio();
                     if let Err(e) = core.unserialize(&state) {
+                        achievements.reset_progress();
                         eprintln!("slot: refresh: {e}");
                     }
                 }
@@ -945,6 +1088,7 @@ impl Worker {
                 let _ = reply.send(crate::thumb::png(core.video_xrgb8888()));
             }
             Cmd::BeginLink(client_id, t) => {
+                achievements.reset_progress();
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
                 self.shared.bios_mismatch.store(false, Ordering::Relaxed);
@@ -954,6 +1098,7 @@ impl Worker {
                 *transport = Some(t);
             }
             Cmd::BeginCable(player, t) => {
+                achievements.reset_progress();
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
                 self.shared.bios_mismatch.store(false, Ordering::Relaxed);
@@ -978,6 +1123,7 @@ impl Worker {
                 core.set_option(&key, &value);
             }
             Cmd::EndLink => {
+                achievements.reset_progress();
                 self.shared.link_lost.store(false, Ordering::Relaxed);
                 self.shared.peer_ended.store(false, Ordering::Relaxed);
                 self.shared.bios_mismatch.store(false, Ordering::Relaxed);

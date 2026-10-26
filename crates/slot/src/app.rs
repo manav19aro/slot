@@ -8,16 +8,17 @@ use slot_power::{Battery, Charge, LedState, LidPolicy, Power, RepairResult};
 use slot_retro::LinkChannel;
 use slot_store::{
     format_stamp, parse_stamp, read_slot_state, scan, write_slot_state, BezelPick, Cart, Core,
-    GbColors, Platform, Recent, Shader, ShotDir, ShotEntry, SlotState, StateEntry, StateRing, WallpaperPick,
-    WallpaperTint, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
+    GbColors, Platform, Recent, Shader, ShotDir, ShotEntry, SlotState, StateEntry, StateRing,
+    WallpaperPick, WallpaperTint, BLUE_LIGHT_MAX, BRIGHTNESS_MAX, FF_SPEEDS, RING_MAX, VOLUME_MAX,
 };
 use slot_ui::{
     board_from, board_zoom, draw_empty_slot, draw_footer, draw_ground, draw_slot_name,
     draw_sticker, ease, footer_ink, grown, lid_at, lid_from, lift_of, on_board, repeat_gap,
     shelf_cart_at, ClockPicker, Draw, FfState, GbShell, Hud, HudKind, Icon, LinkBadge, Millis,
     Placed, Polaroids, PowerChoice, QuickMenu, QuickMenuFaces, QuickRow, QuickValue, Refusal,
-    Shelf, ShotMode, ShotViewer, SlotChrome, TexId, Toast, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W, HINT_EDGE, HOP_LIFT,
-    MOUTH_H, REPEAT_DELAY_MS, SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U, SOCKET_V, SOCKET_W, TURN_PAD,
+    Shelf, ShotMode, ShotViewer, SlotChrome, TexId, Toast, CART_W, CHIP_H, CHIP_U, CHIP_V, CHIP_W,
+    HINT_EDGE, HOP_LIFT, MOUTH_H, REPEAT_DELAY_MS, SHADOW_H, SHADOW_W, SOCKET_H, SOCKET_U,
+    SOCKET_V, SOCKET_W, TURN_PAD,
 };
 
 use crate::audio::Sfx;
@@ -409,6 +410,16 @@ pub struct App {
     quick_bezel_faces: [Option<[(TexId, u32, u32); 2]>; 3],
     game_bezel: Option<TexId>,
     in_game_menu: Option<QuickRow>,
+    achievement_view: Option<slot_ui::AchievementView>,
+    achievement_notice: Option<slot_ui::AchievementNotice>,
+    achievement_requested: bool,
+    achievement_setup_requested: Option<slot_ui::DownloadMode>,
+    achievement_download: Option<slot_ui::DownloadView>,
+    achievement_download_submit: bool,
+    download_busy: bool,
+    achievements_enabled: bool,
+    achievement_mode: slot_achievements::mode::Mode,
+    achievement_face: Option<TexId>,
     /// 0 while the pause footer is off the bottom, 1 when it sits in the carousel's place.
     footer: f32,
     footer_row: Option<QuickRow>,
@@ -618,6 +629,16 @@ impl App {
             quick_bezel_faces: [None, None, None],
             game_bezel: None,
             in_game_menu: None,
+            achievement_view: None,
+            achievement_notice: None,
+            achievement_requested: false,
+            achievement_setup_requested: None,
+            achievement_download: None,
+            achievement_download_submit: false,
+            download_busy: false,
+            achievements_enabled: true,
+            achievement_mode: slot_achievements::mode::Mode::Local,
+            achievement_face: None,
             footer: 0.0,
             footer_row: None,
             states_from_menu: false,
@@ -680,6 +701,8 @@ impl App {
         crate::boot_time::mark("scan");
         let mut app = App::new(carts);
         app.root = Some(root.to_path_buf());
+        app.achievements_enabled = slot_achievements::mode::enabled(root).unwrap_or(false);
+        app.achievement_mode = slot_achievements::mode::read(root).unwrap_or_default();
         app.loading = loading;
         app.state = read_slot_state(root);
         app.carousel = read_carousel(root);
@@ -993,6 +1016,86 @@ impl App {
         }
     }
 
+    /// Browser target is the highlighted ROM on the shelf or the running ROM.
+    pub fn achievement_cart(&self) -> Option<&Cart> {
+        if matches!(self.phase, Phase::Shelf) {
+            self.shelf().carts.get(self.shelf().index)
+        } else {
+            self.seated_cart()
+        }
+    }
+
+    fn open_achievement_browser(&mut self) {
+        if !self.achievements_enabled || self.achievement_cart().is_none() {
+            return;
+        }
+        self.play_held = None;
+        self.shelf_mut().release_left();
+        self.shelf_mut().release_right();
+        self.held_dir = None;
+        self.achievement_view = Some(slot_ui::AchievementView::message(
+            "",
+            "Loading local achievements",
+        ));
+        self.achievement_requested = true;
+    }
+
+    pub fn achievements_enabled(&self) -> bool { self.achievements_enabled }
+
+    pub fn sync_enabled(&self) -> bool {
+        self.achievements_enabled && self.achievement_mode == slot_achievements::mode::Mode::SyncEnabled
+    }
+
+    pub fn set_download_busy(&mut self, busy: bool) {
+        self.download_busy = busy;
+    }
+
+    pub fn take_achievement_setup_request(&mut self) -> Option<slot_ui::DownloadMode> {
+        std::mem::take(&mut self.achievement_setup_requested)
+    }
+    pub fn set_achievement_download(&mut self, view: Option<slot_ui::DownloadView>) {
+        self.achievement_download = view;
+    }
+    pub fn achievement_download(&self) -> Option<&slot_ui::DownloadView> {
+        self.achievement_download.as_ref()
+    }
+    pub fn download_status(&mut self, line: String) {
+        if let Some(view) = &mut self.achievement_download {
+            if !view.cancel_requested {
+                view.status = Some(line);
+            }
+        }
+    }
+    pub fn submit_achievement_download(&mut self) {
+        self.achievement_download_submit = true;
+    }
+
+    pub fn take_download_submission(
+        &mut self,
+    ) -> Option<(slot_ui::DownloadMode, slot_ui::DownloadSetup)> {
+        if !std::mem::take(&mut self.achievement_download_submit) {
+            return None;
+        }
+        let view = self.achievement_download.as_mut()?;
+        let setup = view.setup.clone();
+        view.setup.password.clear();
+        view.status = Some("Preparing download".into());
+        Some((view.mode, setup))
+    }
+
+    pub fn achievement_view(&self) -> Option<&slot_ui::AchievementView> {
+        self.achievement_view.as_ref()
+    }
+    pub fn take_achievement_request(&mut self) -> bool {
+        std::mem::take(&mut self.achievement_requested)
+    }
+    pub fn set_achievement_view(&mut self, view: slot_ui::AchievementView) {
+        self.achievement_view = Some(view);
+    }
+    pub fn set_achievement_face(&mut self, face: Option<TexId>) {
+        self.achievement_face = face;
+    }
+
     pub fn in_game_menu(&self) -> Option<QuickRow> {
         self.in_game_menu
     }
@@ -1000,6 +1103,7 @@ impl App {
     pub fn in_game_hidden(&self) -> Vec<QuickRow> {
         let no_bezel = self.playing_platform() == Platform::Gba && !self.framed_panel();
         let mut hidden = Vec::new();
+        if !self.achievements_enabled { hidden.push(QuickRow::Achievements); }
         if !self.palette_live {
             hidden.push(QuickRow::Palette);
         }
@@ -1054,7 +1158,11 @@ impl App {
                 let at = std::time::Instant::now();
                 let mut shots = dir.list().unwrap_or_default();
                 shots.retain(|e| !removing.contains(&e.path));
-                eprintln!("slot: shots: listed {} in {} ms", shots.len(), at.elapsed().as_millis());
+                eprintln!(
+                    "slot: shots: listed {} in {} ms",
+                    shots.len(),
+                    at.elapsed().as_millis()
+                );
                 let _ = tx.send(shots);
             });
         match spawned {
@@ -1117,6 +1225,17 @@ impl App {
     }
 
     pub fn quick_value(&self, row: QuickRow) -> Option<QuickValue> {
+        if row == QuickRow::AchievementEnabled {
+            return Some(if self.achievements_enabled { QuickValue::On } else { QuickValue::Off });
+        }
+        if row == QuickRow::AchievementMode {
+            return Some(if self.sync_enabled() {
+                QuickValue::SyncEnabled
+            } else {
+                QuickValue::Local
+            });
+        }
+
         match row {
             QuickRow::Shader
             | QuickRow::ColourCorrection
@@ -1170,7 +1289,14 @@ impl App {
             } else {
                 QuickValue::Dark
             }),
-            QuickRow::DateTime
+            QuickRow::Wifi
+            | QuickRow::AchievementSettings
+            | QuickRow::RetroAchievementsLogin
+            | QuickRow::DownloadAllAchievements
+            | QuickRow::AchievementEnabled
+            | QuickRow::AchievementMode
+            | QuickRow::SyncProgress
+            | QuickRow::DateTime
             | QuickRow::About
             | QuickRow::Screen
             | QuickRow::Game
@@ -1180,6 +1306,7 @@ impl App {
             | QuickRow::UndoLoad
             | QuickRow::States
             | QuickRow::Screenshots
+            | QuickRow::Achievements
             | QuickRow::Settings
             | QuickRow::ExitGame
             | QuickRow::PlayScreen
@@ -1434,6 +1561,12 @@ impl App {
             WallpaperPick::File(_) | WallpaperPick::Random
         );
         let mut hidden = Vec::new();
+        if !self.achievements_enabled {
+            hidden.extend([QuickRow::AchievementMode, QuickRow::RetroAchievementsLogin, QuickRow::DownloadAllAchievements]);
+        }
+        if !self.sync_enabled() {
+            hidden.push(QuickRow::SyncProgress);
+        }
         if !own {
             hidden.push(QuickRow::WallpaperTint);
         }
@@ -1830,6 +1963,7 @@ impl App {
             || self.shutting_down();
         let shelf = matches!(self.phase, Phase::Shelf)
             && self.core_picker.is_none()
+            && self.achievement_view.is_none()
             && !self.repair_prompt
             && self.reset_prompt.is_none();
         match self.phase {
@@ -2451,6 +2585,16 @@ impl App {
 
     pub fn apply(&mut self, action: Action) {
         self.track_held_dir(action);
+        if matches!(
+            action,
+            Action::LidClose | Action::PowerTap | Action::PowerHold
+        ) {
+            self.achievement_view = None;
+            self.achievement_download = None;
+            self.achievement_requested = false;
+            self.achievement_setup_requested = None;
+            self.achievement_download_submit = false;
+        }
         match action {
             Action::LidClose => return self.doze(),
             Action::LidOpen => return self.wake(),
@@ -2531,6 +2675,135 @@ impl App {
             Action::GbaUp(Btn::Right) => self.shelf_mut().release_right(),
             _ => {}
         }
+        if let Some(view) = &mut self.achievement_download {
+            match action {
+                Action::QuickMenu | Action::Eject | Action::GbaDown(Btn::B)
+                    if view.status.is_some() =>
+                {
+                    view.cancel_requested = true;
+                    view.status = Some("Disconnecting".into());
+                }
+                Action::QuickMenu | Action::Eject => {
+                    self.achievement_download = None;
+                }
+                Action::GbaDown(Btn::B) => {
+                    if view.step == view.first_step()
+                        || view.completed
+                        || (view.step == 4
+                            && matches!(
+                                view.mode,
+                                slot_ui::DownloadMode::Game
+                                    | slot_ui::DownloadMode::All
+                                    | slot_ui::DownloadMode::SyncGame
+                                    | slot_ui::DownloadMode::SyncAll
+                            ))
+                    {
+                        self.achievement_download = None;
+                    } else {
+                        view.step = if view.step == 4 && view.mode == slot_ui::DownloadMode::Wifi {
+                            1
+                        } else {
+                            view.step - 1
+                        };
+                        view.selected = 0;
+                        view.error.clear();
+                    }
+                }
+                Action::GbaDown(button) if view.status.is_none() => match button {
+                    Btn::A if view.step == 4 => {
+                        if view.can_submit() {
+                            self.achievement_download_submit = true;
+                        }
+                    }
+                    Btn::A => view.type_key(),
+                    Btn::Start => {
+                        if view.step == 4 {
+                            if view.can_submit() {
+                                self.achievement_download_submit = true;
+                            }
+                        } else {
+                            view.next();
+                        }
+                    }
+                    Btn::X => {
+                        view.uppercase = !view.uppercase;
+                    }
+                    Btn::Y => {
+                        view.symbols = !view.symbols;
+                        view.selected = 0;
+                    }
+                    Btn::Left => view.navigate(-1),
+                    Btn::Right => view.navigate(1),
+                    Btn::Up => view.navigate(-10),
+                    Btn::Down => view.navigate(10),
+                    _ => {}
+                },
+                _ => {}
+            }
+            return;
+        }
+        if self.achievement_view.is_some() {
+            match action {
+                Action::GbaDown(Btn::X)
+                    if self.sync_enabled()
+                        && self.achievement_view.as_ref().is_some_and(|v| v.can_sync) =>
+                {
+                    self.achievement_setup_requested = Some(slot_ui::DownloadMode::SyncGame);
+                    return;
+                }
+                Action::GbaDown(Btn::Y)
+                    if self
+                        .achievement_view
+                        .as_ref()
+                        .is_some_and(|v| v.can_download) =>
+                {
+                    self.achievement_setup_requested = Some(slot_ui::DownloadMode::Game);
+                    return;
+                }
+                Action::Eject => {
+                    self.achievement_view = None;
+                    self.achievement_download = None;
+                    self.achievement_requested = false;
+                }
+                Action::QuickMenu => {
+                    self.achievement_view = None;
+                    self.achievement_download = None;
+                    self.in_game_menu = None;
+                    return;
+                }
+                Action::GbaDown(Btn::B) => {
+                    if let Some(view) = self.achievement_view.as_mut().filter(|v| v.details) {
+                        view.details = false;
+                    } else {
+                        self.achievement_view = None;
+                        self.achievement_download = None;
+                    }
+                    return;
+                }
+                Action::GbaDown(Btn::A) => {
+                    if let Some(view) = self.achievement_view.as_mut() {
+                        if !view.rows.is_empty() {
+                            view.details = !view.details;
+                        }
+                    }
+                    return;
+                }
+                Action::GbaDown(button) => {
+                    let step = match button {
+                        Btn::Up => -1,
+                        Btn::Down => 1,
+                        Btn::Left => -5,
+                        Btn::Right => 5,
+                        _ => 0,
+                    };
+                    if let Some(view) = self.achievement_view.as_mut() {
+                        view.navigate(step);
+                    }
+                    return;
+                }
+                _ => return,
+            }
+        }
         if self.game_menu.is_some() {
             return self.game_menu_input(action);
         }
@@ -2542,6 +2815,9 @@ impl App {
         let now = self.now();
         match self.phase {
             Phase::Shelf => match action {
+                Action::GbaDown(Btn::Select) if self.core_picker.is_none() => {
+                    self.open_achievement_browser()
+                }
                 Action::GbaDown(Btn::Start) if self.core_picker.is_none() => {
                     self.open_core_picker()
                 }
@@ -2688,6 +2964,7 @@ impl App {
             }
             QuickRow::States => self.open_states(),
             QuickRow::Screenshots => self.open_shots(),
+            QuickRow::Achievements => self.open_achievement_browser(),
             QuickRow::ExitGame => self.eject(),
             _ => {
                 if let Some(child) = row.child() {
@@ -2737,11 +3014,24 @@ impl App {
 
     fn open_quick_row(&mut self, row: QuickRow) {
         match row {
+            QuickRow::AchievementEnabled | QuickRow::AchievementMode => self.change_setting(row, true),
+            QuickRow::SyncProgress if self.sync_enabled() => {
+                self.achievement_setup_requested = Some(slot_ui::DownloadMode::SyncAll)
+            }
+            QuickRow::SyncProgress => {}
+            QuickRow::Wifi => self.achievement_setup_requested = Some(slot_ui::DownloadMode::Wifi),
+            QuickRow::RetroAchievementsLogin => {
+                self.achievement_setup_requested = Some(slot_ui::DownloadMode::Login)
+            }
+            QuickRow::DownloadAllAchievements => {
+                self.achievement_setup_requested = Some(slot_ui::DownloadMode::All)
+            }
             QuickRow::DateTime => {
                 self.phase = clock_screen(self.utc_secs(), self.state.utc_offset_min, true);
             }
             QuickRow::About => self.phase = Phase::About,
-            QuickRow::Screen
+            QuickRow::AchievementSettings
+            | QuickRow::Screen
             | QuickRow::ScreenGeneral
             | QuickRow::Game
             | QuickRow::ScreenGba
@@ -2786,6 +3076,7 @@ impl App {
             | QuickRow::UndoLoad
             | QuickRow::States
             | QuickRow::Screenshots
+            | QuickRow::Achievements
             | QuickRow::Settings
             | QuickRow::ExitGame
             | QuickRow::PlayScreen
@@ -2833,6 +3124,33 @@ impl App {
 
     fn change_setting(&mut self, row: QuickRow, right: bool) {
         let row = self.playing_row(row);
+        if row == QuickRow::AchievementEnabled {
+            let enabled = !self.achievements_enabled;
+            if let Some(root) = &self.root {
+                if slot_achievements::mode::set_enabled(root, enabled).is_err() {
+                    self.hud.toast(Toast::CardUnwritable, self.now());
+                    return;
+                }
+            }
+            self.achievements_enabled = enabled;
+            return;
+        }
+        if row == QuickRow::AchievementMode {
+            let mode = if self.sync_enabled() {
+                slot_achievements::mode::Mode::Local
+            } else {
+                slot_achievements::mode::Mode::SyncEnabled
+            };
+            if let Some(root) = &self.root {
+                if slot_achievements::mode::write(root, mode).is_err() {
+                    self.hud.toast(Toast::CardUnwritable, self.now());
+                    return;
+                }
+            }
+            self.achievement_mode = mode;
+            return;
+        }
+
         if let QuickRow::Brightness | QuickRow::BlueLight = row {
             let (kind, now, max) = match row {
                 QuickRow::Brightness => {
@@ -2962,6 +3280,13 @@ impl App {
             | QuickRow::Wallpaper
             | QuickRow::Recents
             | QuickRow::ShowTitles
+            | QuickRow::Wifi
+            | QuickRow::AchievementSettings
+            | QuickRow::RetroAchievementsLogin
+            | QuickRow::DownloadAllAchievements
+            | QuickRow::AchievementEnabled
+            | QuickRow::AchievementMode
+            | QuickRow::SyncProgress
             | QuickRow::DateTime
             | QuickRow::About
             | QuickRow::Screen
@@ -2971,6 +3296,7 @@ impl App {
             | QuickRow::UndoLoad
             | QuickRow::States
             | QuickRow::Screenshots
+            | QuickRow::Achievements
             | QuickRow::Settings
             | QuickRow::ExitGame
             | QuickRow::PlayScreen
@@ -3868,6 +4194,28 @@ impl App {
     }
 
     pub fn draw(&self, out: &mut Vec<Draw>) {
+        if self.achievement_view.is_some() || self.achievement_download.is_some() {
+            let canvas = self.canvas();
+            out.push(Draw::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: canvas.w,
+                h: canvas.h,
+                colour: [0.098, 0.11, 0.122, 1.0],
+            });
+            if let Some(tex) = self.achievement_face {
+                let scale = (canvas.w / 640.0).min(canvas.h / 480.0);
+                out.push(Draw::Tex {
+                    x: (canvas.w - 640.0 * scale) / 2.0,
+                    y: (canvas.h - 480.0 * scale) / 2.0,
+                    w: 640.0 * scale,
+                    h: 480.0 * scale,
+                    tex,
+                    alpha: 1.0,
+                });
+            }
+            return;
+        }
         if self.shutting_down() {
             out.push(Draw::Rect {
                 x: 0.0,
@@ -5001,6 +5349,10 @@ impl App {
     }
 
     fn open_game_menu(&mut self) {
+        if self.download_busy {
+            self.refuse();
+            return;
+        }
         if self.game_menu.is_some() {
             return;
         }
@@ -5815,8 +6167,14 @@ impl App {
             return None;
         }
         Some(match self.shots_to_delete() {
-            1 => ("Delete this screenshot?".to_string(), "It cannot be brought back."),
-            n => (format!("Delete {n} screenshots?"), "They cannot be brought back."),
+            1 => (
+                "Delete this screenshot?".to_string(),
+                "It cannot be brought back.",
+            ),
+            n => (
+                format!("Delete {n} screenshots?"),
+                "They cannot be brought back.",
+            ),
         })
     }
 
@@ -5843,6 +6201,31 @@ impl App {
 
     pub fn set_toast_faces(&mut self, faces: Vec<TexId>) {
         self.hud.set_toasts(faces);
+    }
+
+    pub fn achievement_unlocked(&mut self, notice: slot_ui::AchievementNotice) {
+        self.achievement_notification(false);
+        self.achievement_notice = Some(notice);
+    }
+
+    pub fn achievement_notice(&self) -> Option<&slot_ui::AchievementNotice> {
+        (self.toast() == Some(Toast::AchievementUnlocked))
+            .then_some(self.achievement_notice.as_ref())
+            .flatten()
+    }
+
+    pub fn set_achievement_toast_face(&mut self, face: TexId) {
+        self.hud.set_toast_face(Toast::AchievementUnlocked, face);
+    }
+
+    pub fn achievement_notification(&mut self, failed: bool) {
+        self.achievement_notice = None;
+        let toast = if failed {
+            Toast::AchievementsStopped
+        } else {
+            Toast::AchievementUnlocked
+        };
+        self.hud.toast(toast, self.now());
     }
 
     pub fn toast(&self) -> Option<Toast> {

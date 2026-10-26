@@ -80,7 +80,14 @@ fn the_fast_forward_row_offers_off_and_the_four_ceilings_the_card_can_hold() {
 fn the_rows_run_in_the_order_the_user_chose() {
     assert_eq!(
         QuickRow::MAIN.map(QuickRow::label),
-        ["General", "Screen", "Gameplay", "Controls", "About"]
+        [
+            "General",
+            "Screen",
+            "Gameplay",
+            "Controls",
+            "Achievements",
+            "About"
+        ]
     );
     assert_eq!(
         QuickRow::GENERAL.map(QuickRow::label),
@@ -91,7 +98,8 @@ fn the_rows_run_in_the_order_the_user_chose() {
             "Recents",
             "Game Titles",
             "Lid Power Off",
-            "Date & Time"
+            "Date & Time",
+            "Wi-Fi"
         ]
     );
     assert_eq!(
@@ -146,6 +154,7 @@ fn the_rows_run_in_the_order_the_user_chose() {
             QuickRow::Resume,
             QuickRow::States,
             QuickRow::Screenshots,
+            QuickRow::Achievements,
             QuickRow::Settings,
             QuickRow::ExitGame,
             QuickRow::PlayScreen,
@@ -161,7 +170,12 @@ fn the_rows_run_in_the_order_the_user_chose() {
             QuickRow::ControlsInGame,
             QuickRow::ScreenGeneral,
             QuickRow::UndoSave,
-            QuickRow::UndoLoad
+            QuickRow::UndoLoad,
+            QuickRow::Wifi,
+            QuickRow::AchievementSettings,
+            QuickRow::RetroAchievementsLogin,
+            QuickRow::DownloadAllAchievements,
+            QuickRow::SyncProgress
         ]
     );
     for page in [
@@ -188,7 +202,7 @@ fn a_hidden_row_is_stepped_over_and_takes_no_place() {
     let hidden = [QuickRow::WallpaperTint];
     assert_eq!(QuickRow::Wallpaper.down(&hidden), QuickRow::Recents);
     assert_eq!(QuickRow::Recents.up(&hidden), QuickRow::Wallpaper);
-    assert_eq!(QuickRow::Theme.up(&hidden), QuickRow::DateTime);
+    assert_eq!(QuickRow::Theme.up(&hidden), QuickRow::Wifi);
     assert_eq!(QuickRow::Recents.position(&hidden), 2);
     assert_eq!(QuickRow::Wallpaper.down(&[]), QuickRow::WallpaperTint);
     assert_eq!(QuickRow::Recents.position(&[]), 3);
@@ -237,6 +251,8 @@ fn the_values_read_as_the_menu_prints_them() {
             "7",
             "8",
             "9",
+            "Local",
+            "Sync Enabled",
         ]
     );
     assert_eq!(QuickValue::flag(true), QuickValue::On);
@@ -338,6 +354,7 @@ fn the_in_game_pages_hold_their_rows_in_order() {
             QuickRow::UndoLoad,
             QuickRow::States,
             QuickRow::Screenshots,
+            QuickRow::Achievements,
             QuickRow::Settings,
             QuickRow::ExitGame
         ]
@@ -543,4 +560,32 @@ fn show_titles_sits_under_recents_on_the_general_page() {
         at(QuickRow::Recents).map(|i| i + 1)
     );
     assert_eq!(QuickRow::ShowTitles.parent(), Some(QuickRow::General));
+}
+
+#[test]
+fn every_row_indexes_the_same_face_and_value_slot_used_during_upload() {
+    for (index, row) in QuickRow::ALL.into_iter().enumerate() {
+        assert_eq!(row.index(), index, "texture mismatch for {row:?}");
+        assert_eq!(QuickRow::ALL[row.index()], row);
+    }
+    assert_eq!(QuickRow::Achievements.label(), "Achievements");
+    assert_ne!(
+        QuickRow::Achievements.index(),
+        QuickRow::FastForward.index()
+    );
+}
+
+#[test]
+fn achievement_settings_positions_are_stable_when_options_are_hidden() {
+    use slot_ui::quick_row_top;
+    let full = [];
+    let local = [QuickRow::SyncProgress];
+    let disabled = [QuickRow::AchievementMode, QuickRow::RetroAchievementsLogin, QuickRow::DownloadAllAchievements, QuickRow::SyncProgress];
+    let top = quick_row_top(QuickRow::AchievementEnabled, &full);
+    assert_eq!(quick_row_top(QuickRow::AchievementEnabled, &local), top);
+    assert_eq!(quick_row_top(QuickRow::AchievementEnabled, &disabled), top);
+    for row in [QuickRow::AchievementMode, QuickRow::RetroAchievementsLogin, QuickRow::DownloadAllAchievements] {
+        assert_eq!(quick_row_top(row, &full), quick_row_top(row, &local));
+    }
+    assert_eq!(QuickRow::ALL[QuickRow::AchievementEnabled.index()], QuickRow::AchievementEnabled);
 }

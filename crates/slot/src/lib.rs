@@ -5,6 +5,7 @@ macro_rules! eprintln {
     }};
 }
 
+pub mod achievements;
 pub mod app;
 pub mod audio;
 pub mod baseos;
@@ -24,6 +25,7 @@ pub mod crash {
     pub fn install() {}
 }
 pub mod drc;
+mod download_job;
 pub mod emu;
 pub mod face_builder;
 pub mod frames;

@@ -22,7 +22,91 @@ enum PixelFormat {
     Rgb565,
 }
 
+// Only the default address space and bounded, non-disconnected mappings are
+// supported initially (including mGBA's GBA maps). Never retain addrspace strings.
+struct MemoryRegion {
+    ptr: *const u8,
+    offset: usize,
+    start: usize,
+    select: usize,
+    len: usize,
+    accessible: bool,
+    default_space: bool,
+}
+
+// SAFETY: core and mappings move together. Access requires &mut RetroCore and
+// happens between core calls on its owning emulation thread, never concurrently.
+unsafe impl Send for MemoryRegion {}
+
+impl MemoryRegion {
+    unsafe fn capture(d: &MemoryDescriptor) -> Self {
+        let default_space = d.addrspace.is_null() || *d.addrspace == 0;
+        Self {
+            ptr: d.ptr.cast(),
+            offset: d.offset,
+            start: d.start,
+            select: d.select,
+            len: d.len,
+            accessible: d.disconnect == 0 && d.len != 0,
+            default_space,
+        }
+    }
+
+    fn index(&self, address: usize) -> Option<usize> {
+        if !self.default_space {
+            return None;
+        }
+        if self.select == 0 {
+            let index = address.checked_sub(self.start)?;
+            return (index < self.len).then_some(index);
+        }
+        if (address ^ self.start) & self.select != 0 {
+            return None;
+        }
+        let mut index = (address & !self.select).checked_sub(self.start & !self.select)?;
+        // libretro mirrors by clearing the highest set bit until within len.
+        if self.len != 0 {
+            while index >= self.len {
+                index &= !(1usize << (usize::BITS - 1 - index.leading_zeros()));
+            }
+        }
+        Some(index)
+    }
+}
+
+fn read_mapped_memory(regions: &[MemoryRegion], address: u32, buffer: &mut [u8]) -> usize {
+    for (count, byte) in buffer.iter_mut().enumerate() {
+        let Some(address) = u32::try_from(count)
+            .ok()
+            .and_then(|n| address.checked_add(n))
+        else {
+            return count;
+        };
+        let Some((region, index)) = regions
+            .iter()
+            .find_map(|r| r.index(address as usize).map(|i| (r, i)))
+        else {
+            return count;
+        };
+        if !region.accessible || region.ptr.is_null() {
+            return count;
+        }
+        let Some(offset) = region
+            .offset
+            .checked_add(index)
+            .filter(|n| *n <= isize::MAX as usize)
+        else {
+            return count;
+        };
+        // SAFETY: the core promises mapped buffers live for the session. The
+        // descriptor bounds index, and callers exclude concurrent core execution.
+        *byte = unsafe { *region.ptr.add(offset) };
+    }
+    buffer.len()
+}
+
 struct Host {
+    memory_maps: Vec<MemoryRegion>,
     video: Vec<u8>,
     format: PixelFormat,
     audio: Vec<i16>,
@@ -75,6 +159,25 @@ unsafe extern "C" fn set_rumble_state(port: c_uint, effect: c_uint, strength: u1
 
 unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
     match cmd {
+        SET_MEMORY_MAPS => {
+            if data.is_null() {
+                return false;
+            }
+            let map = &*(data as *const MemoryMap);
+            if map.num_descriptors > 4096 || (map.num_descriptors != 0 && map.descriptors.is_null())
+            {
+                return false;
+            }
+            let regions = if map.num_descriptors == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(map.descriptors, map.num_descriptors as usize)
+                    .iter()
+                    .map(|d| MemoryRegion::capture(d))
+                    .collect()
+            };
+            with_host(|h| h.memory_maps = regions).is_some()
+        }
         GET_CAN_DUPE => {
             if data.is_null() {
                 return false;
@@ -470,6 +573,7 @@ impl LibretroCore {
             return Err(CoreError::Unsupported(format!("libretro api {version}")));
         }
         let mut host = Box::new(Host {
+            memory_maps: Vec::new(),
             video: vec![0; VIDEO_BYTES],
             format: PixelFormat::Xrgb8888,
             audio: Vec::new(),
@@ -515,6 +619,7 @@ impl LibretroCore {
         if !self.loaded {
             return;
         }
+        self.host.memory_maps.clear();
         let _a = Active::bind(&mut self.host);
         unsafe { (self.api.unload_game)() };
         self.loaded = false;
@@ -560,6 +665,13 @@ impl Drop for LibretroCore {
 }
 
 impl RetroCore for LibretroCore {
+    fn read_memory(&mut self, address: u32, buffer: &mut [u8]) -> usize {
+        if !self.loaded {
+            return 0;
+        }
+        read_mapped_memory(&self.host.memory_maps, address, buffer)
+    }
+
     fn set_option(&mut self, key: &str, value: &str) {
         LibretroCore::set_option(self, key, value);
     }
@@ -567,6 +679,7 @@ impl RetroCore for LibretroCore {
     fn load(&mut self, rom: &Path) -> Result<(), CoreError> {
         self.unload();
         self.state_size = None;
+        self.host.memory_maps.clear();
         self.rom = std::fs::read(rom)?;
         self.rom_path = Some(
             CString::new(rom.as_os_str().as_encoded_bytes())
@@ -583,6 +696,7 @@ impl RetroCore for LibretroCore {
             unsafe { (self.api.load_game)(&info) }
         };
         if !ok {
+            self.host.memory_maps.clear();
             self.rom = Vec::new();
             self.rom_path = None;
             return Err(CoreError::Load(format!("core refused {}", rom.display())));
@@ -716,6 +830,7 @@ mod tests {
 
     fn host_with(options: HashMap<String, CString>, options_dirty: bool) -> Box<Host> {
         Box::new(Host {
+            memory_maps: Vec::new(),
             video: vec![0; VIDEO_BYTES],
             format: PixelFormat::Xrgb8888,
             audio: Vec::new(),
@@ -732,6 +847,112 @@ mod tests {
             options_dirty,
             declared: HashMap::new(),
         })
+    }
+
+    fn descriptor(bytes: &mut [u8], start: usize, select: usize) -> MemoryDescriptor {
+        MemoryDescriptor {
+            flags: 0,
+            ptr: bytes.as_mut_ptr().cast(),
+            offset: 0,
+            start,
+            select,
+            disconnect: 0,
+            len: bytes.len(),
+            addrspace: ptr::null(),
+        }
+    }
+
+    #[test]
+    fn memory_maps_copy_descriptors_and_replace_previous_maps() {
+        let mut host = host_with(HashMap::new(), false);
+        let mut ewram = vec![0; 0x40000];
+        let mut iwram = vec![0; 0x8000];
+        ewram[0] = 0x12;
+        iwram[0] = 0x34;
+        {
+            let descriptors = [
+                descriptor(&mut ewram, 0x02000000, 0xff000000),
+                descriptor(&mut iwram, 0x03000000, 0xff000000),
+            ];
+            let mut map = MemoryMap {
+                descriptors: descriptors.as_ptr(),
+                num_descriptors: 2,
+            };
+            let _active = Active::bind(&mut host);
+            assert!(unsafe { environment(SET_MEMORY_MAPS, (&mut map as *mut MemoryMap).cast()) });
+        }
+        let mut out = [0];
+        assert_eq!(
+            read_mapped_memory(&host.memory_maps, 0x02000000, &mut out),
+            1
+        );
+        assert_eq!(out, [0x12]);
+        assert_eq!(
+            read_mapped_memory(&host.memory_maps, 0x03008000, &mut out),
+            1
+        );
+        assert_eq!(out, [0x34], "IWRAM mirror");
+        iwram[0] = 0x56;
+        assert_eq!(
+            read_mapped_memory(&host.memory_maps, 0x03000000, &mut out),
+            1
+        );
+        assert_eq!(out, [0x56], "reads live core memory, not a snapshot");
+        let mut empty = MemoryMap {
+            descriptors: ptr::null(),
+            num_descriptors: 0,
+        };
+        {
+            let _active = Active::bind(&mut host);
+            assert!(unsafe { environment(SET_MEMORY_MAPS, (&mut empty as *mut MemoryMap).cast()) });
+        }
+        assert_eq!(
+            read_mapped_memory(&host.memory_maps, 0x02000000, &mut out),
+            0
+        );
+    }
+
+    #[test]
+    fn memory_reads_stop_at_holes_and_respect_offsets_and_address_overflow() {
+        let mut bytes = [9, 1, 2, 3, 4];
+        let mut d = descriptor(&mut bytes, 0x02000000, 0);
+        d.offset = 1;
+        d.len = 4;
+        let regions = [unsafe { MemoryRegion::capture(&d) }];
+        let mut out = [0xaa; 4];
+        assert_eq!(read_mapped_memory(&regions, 0x02000002, &mut out), 2);
+        assert_eq!(out, [3, 4, 0xaa, 0xaa]);
+        assert_eq!(read_mapped_memory(&regions, 0x01ffffff, &mut out), 0);
+        d.start = u32::MAX as usize;
+        d.len = 1;
+        let regions = [unsafe { MemoryRegion::capture(&d) }];
+        assert_eq!(read_mapped_memory(&regions, u32::MAX, &mut out), 1);
+    }
+
+    #[test]
+    fn inaccessible_first_mapping_does_not_fall_through_to_an_overlap() {
+        let mut bytes = [7; 4];
+        let good = descriptor(&mut bytes, 0x02000000, 0);
+        let mut hole = good;
+        hole.ptr = ptr::null_mut();
+        let regions = unsafe { [MemoryRegion::capture(&hole), MemoryRegion::capture(&good)] };
+        assert_eq!(read_mapped_memory(&regions, 0x02000000, &mut [0]), 0);
+        hole = good;
+        hole.disconnect = 1;
+        let regions = unsafe { [MemoryRegion::capture(&hole)] };
+        assert_eq!(read_mapped_memory(&regions, 0x02000000, &mut [0]), 0);
+    }
+
+    #[test]
+    fn memory_map_callback_rejects_invalid_descriptor_arrays() {
+        let mut host = host_with(HashMap::new(), false);
+        let _active = Active::bind(&mut host);
+        assert!(!unsafe { environment(SET_MEMORY_MAPS, ptr::null_mut()) });
+        let mut map = MemoryMap {
+            descriptors: ptr::null(),
+            num_descriptors: 1,
+        };
+        assert!(!unsafe { environment(SET_MEMORY_MAPS, (&mut map as *mut MemoryMap).cast()) });
     }
 
     fn declaration(key: &str, value: &str) -> (Variable, CString, CString) {

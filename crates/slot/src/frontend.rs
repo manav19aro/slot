@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 use slot_gfx::{Compositor, Draw, ScreenEffect, TexId, OUT_H, OUT_W};
 
 const PAPER: &[u8] = include_bytes!("../assets/paper.png");
+use crate::shot_loader::{ShotLoader, Want};
 use slot_input::{InputSource, Millis};
 use slot_power::{Platform, Power};
 use slot_store::{format_stamp, BezelPick, Platform as Console};
-use crate::shot_loader::{ShotLoader, Want};
 use slot_ui::{
     badge_face, bezel_face, cart_shadow, chip_face, chip_shadow_face, core_button_legends,
     date_time_text, default_game_bezel_face, delete_legends, footer_ink, game_bezel_face,
@@ -35,6 +35,11 @@ const DOZE_TIMEOUT: Duration = Duration::from_secs(180);
 const ALERT_INK: [u8; 3] = [0xf0, 0xb4, 0x3c];
 
 pub struct Frontend {
+    achievement_texture: Option<TexId>,
+    achievement_toast_texture: Option<TexId>,
+    achievement_notice_shown: Option<slot_ui::AchievementNotice>,
+    achievement_shown: Option<slot_ui::AchievementView>,
+    download_shown: Option<slot_ui::DownloadView>,
     session: Session,
     start: Instant,
     last: Instant,
@@ -173,6 +178,11 @@ impl Frontend {
             .app_mut()
             .set_power(Power::new(platform, DOZE_TIMEOUT));
         Frontend {
+            achievement_texture: None,
+            achievement_toast_texture: None,
+            achievement_notice_shown: None,
+            achievement_shown: None,
+            download_shown: None,
             session,
             start: now,
             last: now,
@@ -270,7 +280,11 @@ impl Frontend {
             .collect();
         self.session.app_mut().set_shot_hint_faces(shot_hints);
         let tick = slot_ui::tick_cap_face();
-        let tick = (compositor.create_texture(tick.w, tick.h, &tick.rgba), tick.w, tick.h);
+        let tick = (
+            compositor.create_texture(tick.w, tick.h, &tick.rgba),
+            tick.w,
+            tick.h,
+        );
         self.session.app_mut().set_shot_tick_face(tick);
         let hint = set_clock_hint_face();
         self.clocks.hint = Some(compositor.create_texture(hint.w, hint.h, &hint.rgba));
@@ -577,6 +591,67 @@ impl Frontend {
         } else if let Some(frame) = self.session.frame() {
             compositor.upload_game(&frame);
             crate::latency::taken();
+        }
+        if let Some(notice) = self.session.app().achievement_notice() {
+            if self.achievement_notice_shown.as_ref() != Some(notice) {
+                let face = slot_ui::achievement_toast_face(notice);
+                let tex = match self.achievement_toast_texture {
+                    Some(tex) => {
+                        compositor.update_texture(tex, face.w, face.h, &face.rgba);
+                        tex
+                    }
+                    None => {
+                        let tex = compositor.create_texture(face.w, face.h, &face.rgba);
+                        self.achievement_toast_texture = Some(tex);
+                        tex
+                    }
+                };
+                self.achievement_notice_shown = Some(notice.clone());
+                self.session.app_mut().set_achievement_toast_face(tex);
+            }
+        } else {
+            self.achievement_notice_shown = None;
+        }
+        if let Some(view) = self.session.app().achievement_download() {
+            if self.download_shown.as_ref() != Some(view) {
+                let face = slot_ui::achievement_download_face(view);
+                let tex = match self.achievement_texture {
+                    Some(tex) => {
+                        compositor.update_texture(tex, face.w, face.h, &face.rgba);
+                        tex
+                    }
+                    None => {
+                        let tex = compositor.create_texture(face.w, face.h, &face.rgba);
+                        self.achievement_texture = Some(tex);
+                        tex
+                    }
+                };
+                self.download_shown = Some(view.clone());
+                self.session.app_mut().set_achievement_face(Some(tex));
+            }
+            self.achievement_shown = None;
+        } else if let Some(view) = self.session.app().achievement_view() {
+            self.download_shown = None;
+            if self.achievement_shown.as_ref() != Some(view) {
+                let face = slot_ui::achievement_face(view);
+                let tex = match self.achievement_texture {
+                    Some(tex) => {
+                        compositor.update_texture(tex, face.w, face.h, &face.rgba);
+                        tex
+                    }
+                    None => {
+                        let tex = compositor.create_texture(face.w, face.h, &face.rgba);
+                        self.achievement_texture = Some(tex);
+                        tex
+                    }
+                };
+                self.achievement_shown = Some(view.clone());
+                self.session.app_mut().set_achievement_face(Some(tex));
+            }
+        } else {
+            self.download_shown = None;
+            self.achievement_shown = None;
+            self.session.app_mut().set_achievement_face(None);
         }
         self.cart_faces.sync(self.session.app_mut(), compositor);
         sync_clock(self.session.app_mut(), compositor, &mut self.clocks);
@@ -1106,7 +1181,9 @@ fn sync_gallery(app: &mut App, compositor: &mut Compositor, state: &mut Switcher
     }
     for l in loader.poll() {
         match l.want {
-            Want::Thumb if state.window.contains(&l.path) && !state.thumbs.contains_key(&l.path) => {
+            Want::Thumb
+                if state.window.contains(&l.path) && !state.thumbs.contains_key(&l.path) =>
+            {
                 let id = match state.spare.pop() {
                     Some(id) => {
                         compositor.update_texture(id, l.w, l.h, &l.rgba);
@@ -1141,7 +1218,10 @@ fn sync_gallery(app: &mut App, compositor: &mut Compositor, state: &mut Switcher
                 app.set_shot_face(Some((id, l.w, l.h)));
                 state.full_pending = None;
                 if let Some(at) = state.full_asked.take() {
-                    eprintln!("slot: gallery: full shot in {} ms", at.elapsed().as_millis());
+                    eprintln!(
+                        "slot: gallery: full shot in {} ms",
+                        at.elapsed().as_millis()
+                    );
                 }
             }
             _ => {}

@@ -6,6 +6,8 @@ use crate::core::CoreError;
 
 pub const API_VERSION: c_uint = 1;
 
+pub const SET_MEMORY_MAPS: c_uint = 36 | 0x10000;
+
 pub const GET_CAN_DUPE: c_uint = 3;
 pub const GET_SYSTEM_DIRECTORY: c_uint = 9;
 pub const SET_PIXEL_FORMAT: c_uint = 10;
@@ -177,4 +179,24 @@ impl Api {
             get_memory_size: get!("retro_get_memory_size"),
         })
     }
+}
+
+// Layouts from libretro.h. Descriptor arrays may be temporary callback data.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MemoryDescriptor {
+    pub flags: u64,
+    pub ptr: *mut c_void,
+    pub offset: usize,
+    pub start: usize,
+    pub select: usize,
+    pub disconnect: usize,
+    pub len: usize,
+    pub addrspace: *const c_char,
+}
+
+#[repr(C)]
+pub struct MemoryMap {
+    pub descriptors: *const MemoryDescriptor,
+    pub num_descriptors: c_uint,
 }

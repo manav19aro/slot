@@ -28,7 +28,7 @@ fn a_cart_gpsp_cannot_link_says_there_is_no_link() {
 fn the_banner_says_what_happened_and_never_what_is_on_screen() {
     let all = Toast::all();
     assert_eq!(
-        all[..21],
+        all[..23],
         [
             Toast::StateSaved,
             Toast::StateLoaded,
@@ -51,18 +51,20 @@ fn the_banner_says_what_happened_and_never_what_is_on_screen() {
             Toast::CardRepairCharge,
             Toast::CardRepaired,
             Toast::CardRepairFailed,
+            Toast::AchievementUnlocked,
+            Toast::AchievementsStopped,
         ],
         "a banner was added or dropped: every face is uploaded by its place in this list"
     );
     let palettes = GbColors::all().count();
     assert_eq!(palettes, 49);
     assert_eq!(
-        all[21..21 + palettes],
+        all[23..23 + palettes],
         GbColors::all().map(Toast::Palette).collect::<Vec<_>>()[..],
         "the palette banners do not follow the fixed ones in palette order"
     );
     assert_eq!(
-        all[21 + palettes..],
+        all[23 + palettes..],
         QuickRow::ALL
             .into_iter()
             .filter(|r| r.binds())
@@ -101,7 +103,10 @@ fn no_toast_is_shrunk_to_fit_its_box() {
         (first, last)
     };
     let (top, bottom) = rows(Toast::StateSaved);
-    for t in Toast::all().into_iter().filter(|t| !t.alarm()) {
+    for t in Toast::all()
+        .into_iter()
+        .filter(|t| !t.alarm() && *t != Toast::AchievementUnlocked)
+    {
         let (a, b) = rows(t);
         assert!(
             a.abs_diff(top) <= 1 && b.abs_diff(bottom) <= 1,
@@ -400,4 +405,22 @@ fn the_shot_toast_says_screenshot_captured_beside_a_camera() {
 fn a_failed_shot_says_so_beside_the_alert() {
     assert_eq!(Toast::ShotFailed.text(), "Screenshot Failed");
     assert_eq!(Toast::ShotFailed.icon(), Some(Icon::Alert));
+}
+
+#[test]
+fn expanded_achievement_banner_has_backing_under_every_line() {
+    let mut hud = Hud::new();
+    hud.toast(Toast::AchievementUnlocked, 0);
+    let mut draws = Vec::new();
+    hud.draw(Canvas::FRAMED, 0, &mut draws);
+    let (_, top, _, height) = toast_rect(Canvas::FRAMED, Toast::AchievementUnlocked);
+    let backing = draws
+        .iter()
+        .find_map(|draw| match draw {
+            Draw::Rect { h, colour, .. } if colour[3] > 0.6 => Some(*h),
+            _ => None,
+        })
+        .expect("achievement text needs a contrasting background");
+    assert!(backing >= top + height);
+    assert!(backing < 100.0);
 }

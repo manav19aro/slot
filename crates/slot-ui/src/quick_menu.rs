@@ -11,6 +11,14 @@ use slot_store::{CarouselAction, GameButton, Shortcut};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum QuickRow {
+    Achievements,
+    Wifi,
+    AchievementSettings,
+    RetroAchievementsLogin,
+    DownloadAllAchievements,
+    AchievementEnabled,
+    AchievementMode,
+    SyncProgress,
     FastForward,
     FastForwardSound,
     Screen,
@@ -98,7 +106,7 @@ pub enum QuickRow {
 }
 
 impl QuickRow {
-    pub const ALL: [QuickRow; 84] = [
+    pub const ALL: [QuickRow; 92] = [
         QuickRow::FastForward,
         QuickRow::FastForwardSound,
         QuickRow::Screen,
@@ -124,6 +132,7 @@ impl QuickRow {
         QuickRow::Resume,
         QuickRow::States,
         QuickRow::Screenshots,
+        QuickRow::Achievements,
         QuickRow::Settings,
         QuickRow::ExitGame,
         QuickRow::PlayScreen,
@@ -183,17 +192,25 @@ impl QuickRow {
         QuickRow::AutoLoad,
         QuickRow::UndoSave,
         QuickRow::UndoLoad,
+        QuickRow::Wifi,
+        QuickRow::AchievementSettings,
+        QuickRow::RetroAchievementsLogin,
+        QuickRow::DownloadAllAchievements,
+        QuickRow::AchievementMode,
+        QuickRow::SyncProgress,
+        QuickRow::AchievementEnabled,
     ];
 
-    pub const MAIN: [QuickRow; 5] = [
+    pub const MAIN: [QuickRow; 6] = [
         QuickRow::General,
         QuickRow::Screen,
         QuickRow::Game,
         QuickRow::Controls,
+        QuickRow::AchievementSettings,
         QuickRow::About,
     ];
 
-    pub const GENERAL: [QuickRow; 7] = [
+    pub const GENERAL: [QuickRow; 8] = [
         QuickRow::Theme,
         QuickRow::Wallpaper,
         QuickRow::WallpaperTint,
@@ -201,6 +218,15 @@ impl QuickRow {
         QuickRow::ShowTitles,
         QuickRow::LidOff,
         QuickRow::DateTime,
+        QuickRow::Wifi,
+    ];
+
+    pub const ACHIEVEMENT_SETTINGS: [QuickRow; 5] = [
+        QuickRow::AchievementEnabled,
+        QuickRow::AchievementMode,
+        QuickRow::RetroAchievementsLogin,
+        QuickRow::DownloadAllAchievements,
+        QuickRow::SyncProgress,
     ];
 
     pub const CONTROL_PAGES: [QuickRow; 3] = [
@@ -286,12 +312,13 @@ impl QuickRow {
         QuickRow::EjectSave,
     ];
 
-    pub const PLAY: [QuickRow; 7] = [
+    pub const PLAY: [QuickRow; 8] = [
         QuickRow::Resume,
         QuickRow::UndoSave,
         QuickRow::UndoLoad,
         QuickRow::States,
         QuickRow::Screenshots,
+        QuickRow::Achievements,
         QuickRow::Settings,
         QuickRow::ExitGame,
     ];
@@ -312,11 +339,20 @@ impl QuickRow {
     ];
 
     pub fn index(self) -> usize {
-        self as usize
+        // Faces and row values are uploaded in ALL order, not enum order.
+        Self::ALL
+            .iter()
+            .position(|row| *row == self)
+            .expect("every menu row belongs to ALL")
     }
 
     pub fn page(self) -> &'static [QuickRow] {
         match self {
+            QuickRow::AchievementEnabled
+            | QuickRow::AchievementMode
+            | QuickRow::SyncProgress
+            | QuickRow::RetroAchievementsLogin
+            | QuickRow::DownloadAllAchievements => &QuickRow::ACHIEVEMENT_SETTINGS,
             QuickRow::ScreenGeneral
             | QuickRow::ScreenGba
             | QuickRow::ScreenGbc
@@ -347,6 +383,7 @@ impl QuickRow {
             | QuickRow::Theme
             | QuickRow::Recents
             | QuickRow::ShowTitles
+            | QuickRow::Wifi
             | QuickRow::LidOff => &QuickRow::GENERAL,
             QuickRow::ControlsShelf | QuickRow::Shortcuts | QuickRow::ControlsInGame => {
                 &QuickRow::CONTROL_PAGES
@@ -356,6 +393,7 @@ impl QuickRow {
             | QuickRow::UndoLoad
             | QuickRow::States
             | QuickRow::Screenshots
+            | QuickRow::Achievements
             | QuickRow::Settings
             | QuickRow::ExitGame => &QuickRow::PLAY,
             QuickRow::PlayScreen | QuickRow::PlayGameplay | QuickRow::PlayControls => {
@@ -384,6 +422,7 @@ impl QuickRow {
             QuickRow::GameUp => Some(QuickRow::ControlsInGame),
             QuickRow::ScSave => Some(QuickRow::Shortcuts),
             QuickRow::Theme => Some(QuickRow::General),
+            QuickRow::AchievementEnabled => Some(QuickRow::AchievementSettings),
             QuickRow::ControlsShelf => Some(QuickRow::Controls),
             QuickRow::ShelfPrev => Some(QuickRow::ControlsShelf),
             _ => None,
@@ -411,6 +450,7 @@ impl QuickRow {
 
     pub fn child(self) -> Option<QuickRow> {
         match self {
+            QuickRow::AchievementSettings => Some(QuickRow::AchievementEnabled),
             QuickRow::Screen => Some(QuickRow::SCREEN[0]),
             QuickRow::Game => Some(QuickRow::GAME[0]),
             QuickRow::Settings => Some(QuickRow::SETTINGS[0]),
@@ -447,6 +487,13 @@ impl QuickRow {
 
     pub fn label(self) -> &'static str {
         match self {
+            QuickRow::AchievementEnabled => "Achievements",
+            QuickRow::AchievementMode => "Version",
+            QuickRow::SyncProgress => "Sync Progress",
+            QuickRow::Wifi => "Wi-Fi",
+            QuickRow::AchievementSettings => "Achievements",
+            QuickRow::RetroAchievementsLogin => "RetroAchievements Login",
+            QuickRow::DownloadAllAchievements => "Download All Achievements",
             QuickRow::FastForward => "Fast Forward",
             QuickRow::FastForwardSound => "Fast Forward Sound",
             QuickRow::Screen => "Screen",
@@ -479,6 +526,7 @@ impl QuickRow {
             QuickRow::UndoLoad => "Undo Load",
             QuickRow::States => "States",
             QuickRow::Screenshots => "Screenshots",
+            QuickRow::Achievements => "Achievements",
             QuickRow::Settings => "Settings",
             QuickRow::ExitGame => "Exit Game",
             QuickRow::General => "General",
@@ -535,7 +583,12 @@ impl QuickRow {
     pub fn opens(self) -> bool {
         matches!(
             self,
-            QuickRow::DateTime
+            QuickRow::Wifi
+                | QuickRow::AchievementSettings
+                | QuickRow::RetroAchievementsLogin
+                | QuickRow::DownloadAllAchievements
+                | QuickRow::SyncProgress
+                | QuickRow::DateTime
                 | QuickRow::About
                 | QuickRow::Screen
                 | QuickRow::Game
@@ -544,6 +597,7 @@ impl QuickRow {
                 | QuickRow::UndoLoad
                 | QuickRow::States
                 | QuickRow::Screenshots
+                | QuickRow::Achievements
                 | QuickRow::Settings
                 | QuickRow::ExitGame
                 | QuickRow::PlayScreen
@@ -660,10 +714,12 @@ pub enum QuickValue {
     Level7,
     Level8,
     Level9,
+    Local,
+    SyncEnabled,
 }
 
 impl QuickValue {
-    pub const ALL: [QuickValue; 33] = [
+    pub const ALL: [QuickValue; 35] = [
         QuickValue::Speed2,
         QuickValue::Speed3,
         QuickValue::Speed4,
@@ -697,6 +753,8 @@ impl QuickValue {
         QuickValue::Level7,
         QuickValue::Level8,
         QuickValue::Level9,
+        QuickValue::Local,
+        QuickValue::SyncEnabled,
     ];
 
     pub const LEVELS: [QuickValue; 10] = [
@@ -727,6 +785,8 @@ impl QuickValue {
 
     pub fn text(self) -> &'static str {
         match self {
+            QuickValue::Local => "Local",
+            QuickValue::SyncEnabled => "Sync Enabled",
             QuickValue::Speed2 => "2×",
             QuickValue::Speed3 => "3×",
             QuickValue::Speed4 => "4×",
@@ -814,7 +874,7 @@ const TYPE_DROP: f32 = 4.0;
 const CARET_GAP: f32 = 14.0;
 const CARET_PX: f32 = 24.0;
 const LEGEND_Y: f32 = 427.0;
-const DIM_INK: [u8; 3] = [0x9a, 0x9a, 0xa4];
+pub(crate) const DIM_INK: [u8; 3] = [0x9a, 0x9a, 0xa4];
 const DESCRIPTION_PX: f32 = 16.0;
 const DESCRIPTION_GAP: f32 = 8.0;
 const PANEL_GAP: f32 = 12.0;
@@ -1347,7 +1407,9 @@ pub fn quick_scroll(selected: QuickRow, hidden: &[QuickRow]) -> Option<QuickScro
 
 pub fn quick_row_top_at(row: QuickRow, selected: QuickRow, hidden: &[QuickRow]) -> f32 {
     let (start, len) = quick_window(selected, hidden);
-    let rows = QUICK_PITCH * len as f32;
+    // Reserve the full settings page so hiding options never recentres it.
+    let layout_len = if row.page() == QuickRow::ACHIEVEMENT_SETTINGS { QuickRow::ACHIEVEMENT_SETTINGS.len() } else { len };
+    let rows = QUICK_PITCH * layout_len as f32;
     let top = match row.page() == QuickRow::PLAY_SCREEN {
         true => OUT_H as f32 - MOUTH_H - PANEL_GAP - rows,
         false => (LEGEND_Y - rows) / 2.0,

@@ -167,6 +167,12 @@ impl Hud {
         self.icons = icons;
     }
 
+    pub fn set_toast_face(&mut self, toast: Toast, face: TexId) {
+        if let Some(slot) = self.toasts.get_mut(toast.index()) {
+            *slot = face;
+        }
+    }
+
     pub fn set_toasts(&mut self, toasts: Vec<TexId>) {
         self.toasts = toasts;
     }
@@ -265,7 +271,12 @@ impl Hud {
                 x: 0.0,
                 y: 0.0,
                 w: canvas.w,
-                h: PLATE_H,
+                h: if toast > 0.0 && self.said.map(|(t, _)| t) == Some(Toast::AchievementUnlocked) {
+                    let (_, y, _, h) = toast_rect(canvas, Toast::AchievementUnlocked);
+                    y + h + 5.0
+                } else {
+                    PLATE_H
+                },
                 colour: faded(PLATE, alpha.max(toast)),
             });
             if toast > 0.0 {

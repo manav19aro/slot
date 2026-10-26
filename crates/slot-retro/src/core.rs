@@ -89,6 +89,12 @@ pub trait RetroCore: Send {
     fn unserialize(&mut self, data: &[u8]) -> Result<(), CoreError>;
     fn save_ram(&self) -> Option<Vec<u8>>;
     fn load_save_ram(&mut self, data: &[u8]) -> Result<(), CoreError>;
+    /// Copies bytes from the console's native address space, stopping at the first
+    /// inaccessible address. This is not the RetroAchievements logical address space.
+    /// Call on the emulation thread between frames; no core memory escapes the call.
+    fn read_memory(&mut self, _address: u32, _buffer: &mut [u8]) -> usize {
+        0
+    }
     fn av_info(&self) -> AvInfo;
     fn rumble(&self) -> Rumble {
         Rumble::default()

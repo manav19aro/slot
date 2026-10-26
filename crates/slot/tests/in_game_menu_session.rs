@@ -101,7 +101,7 @@ fn colour_correction_changed_behind_the_menu_redraws_the_paused_frame() {
     );
     open_menu(&mut s, &mut now);
     assert!(runs_at(&mut s, &mut now, Speed::Paused));
-    for btn in [Btn::Down, Btn::A, Btn::A, Btn::Down] {
+    for btn in [Btn::Down, Btn::Down, Btn::A, Btn::A, Btn::Down] {
         tap(&mut s, &mut now, btn);
     }
     assert_eq!(s.app().in_game_menu(), Some(QuickRow::ColourCorrection));
@@ -193,4 +193,22 @@ fn fast_forward_cannot_be_locked_from_inside_the_menu() {
             "R2 pressed in the menu fast forwarded the game on resume"
         );
     }
+}
+
+#[test]
+fn achievement_browser_keeps_game_paused_until_returning_to_play() {
+    let (mut session, _dir, mut now) = session_playing();
+    open_menu(&mut session, &mut now);
+    while session.app().in_game_menu() != Some(QuickRow::Achievements) {
+        tap(&mut session, &mut now, Btn::Down);
+    }
+    tap(&mut session, &mut now, Btn::A);
+    assert!(session.app().achievement_view().is_some());
+    assert!(runs_at(&mut session, &mut now, Speed::Paused));
+    tap(&mut session, &mut now, Btn::B);
+    assert!(session.app().achievement_view().is_none());
+    assert_eq!(session.app().in_game_menu(), Some(QuickRow::Achievements));
+    assert!(runs_at(&mut session, &mut now, Speed::Paused));
+    tap(&mut session, &mut now, Btn::B);
+    assert!(runs_at(&mut session, &mut now, Speed::Normal));
 }

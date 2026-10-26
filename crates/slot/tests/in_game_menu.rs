@@ -98,7 +98,11 @@ fn screen_shows_the_palette_only_when_palettes_are_live() {
     ];
     assert_eq!(
         a.in_game_hidden(),
-        [&[QuickRow::Palette, QuickRow::Bezel, QuickRow::LeftStick][..], &empty].concat()
+        [
+            &[QuickRow::Palette, QuickRow::Bezel, QuickRow::LeftStick][..],
+            &empty
+        ]
+        .concat()
     );
     a.set_palette_live(true);
     assert_eq!(
@@ -476,7 +480,7 @@ fn exit_game_is_not_offered_with_only_one_cart() {
     a.apply(Action::SaveState);
     a.apply(Action::QuickMenu);
     let mut seen = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..6 {
         seen.push(a.in_game_menu().expect("the menu closed"));
         press(&mut a, Btn::Down);
     }
@@ -486,6 +490,7 @@ fn exit_game_is_not_offered_with_only_one_cart() {
             QuickRow::Resume,
             QuickRow::UndoSave,
             QuickRow::States,
+            QuickRow::Achievements,
             QuickRow::Settings,
             QuickRow::Resume
         ]
@@ -769,4 +774,55 @@ fn a_refused_double_tap_in_the_menu_with_no_states_stays_on_a_shown_row() {
     a.apply(Action::Polaroids);
     assert!(matches!(a.phase(), Phase::Playing { .. }));
     cursor_on_a_shown_row(&a);
+}
+
+#[test]
+fn achievements_open_from_the_pause_menu_and_b_returns_to_the_same_row() {
+    let (_d, mut app) = playing();
+    go_to(&mut app, QuickRow::Achievements);
+    press(&mut app, Btn::A);
+    assert!(app.achievement_view().is_some());
+    assert!(app.take_achievement_request());
+    assert!(!app.take_achievement_request());
+    assert_eq!(app.in_game_menu(), Some(QuickRow::Achievements));
+    press(&mut app, Btn::B);
+    assert!(app.achievement_view().is_none());
+    assert_eq!(app.in_game_menu(), Some(QuickRow::Achievements));
+    press(&mut app, Btn::B);
+    assert_eq!(app.in_game_menu(), None);
+}
+
+#[test]
+fn achievements_menu_shortcut_closes_the_browser_and_resumes() {
+    let (_d, mut app) = playing();
+    go_to(&mut app, QuickRow::Achievements);
+    press(&mut app, Btn::A);
+    app.apply(Action::QuickMenu);
+    assert!(app.achievement_view().is_none());
+    assert!(app.in_game_menu().is_none());
+}
+
+#[test]
+fn achievement_details_return_to_list_before_leaving_the_browser() {
+    let (_d, mut app) = playing();
+    go_to(&mut app, QuickRow::Achievements);
+    press(&mut app, Btn::A);
+    let mut view = slot_ui::AchievementView::message("Test", "");
+    view.rows.push(slot_ui::AchievementRow {
+                id: 0,
+                progress: None,
+        badge: None,
+        title: "Test achievement".into(),
+        description: "Full description".into(),
+        points: 5,
+        status: "Locked",
+        earned: false,
+    });
+    app.set_achievement_view(view);
+    press(&mut app, Btn::A);
+    assert!(app.achievement_view().unwrap().details);
+    press(&mut app, Btn::B);
+    assert!(!app.achievement_view().unwrap().details);
+    press(&mut app, Btn::B);
+    assert!(app.achievement_view().is_none());
 }

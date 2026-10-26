@@ -244,3 +244,40 @@ fn an_empty_state_is_refused_instead_of_crashing_mgba() {
     c.load(&test_rom()).unwrap();
     assert!(c.unserialize(&[]).is_err());
 }
+
+#[test]
+fn mgba_exposes_live_gba_ram_and_replaces_maps_when_loading_another_game() {
+    let _g = lock();
+    let Some(mut core) = test_core() else {
+        eprintln!("no mGBA library; memory-map integration test skipped");
+        return;
+    };
+    let base = test_rom();
+    let mut rom = std::fs::read(base).unwrap();
+    // ARM: write 0x12 to EWRAM and 0x34 to IWRAM, then loop forever.
+    let code: [u32; 7] = [
+        0xe3a00402, 0xe3a01403, 0xe3a02012, 0xe5c02000, 0xe3a02034, 0xe5c12000, 0xeafffffe,
+    ];
+    for (i, word) in code.iter().enumerate() {
+        rom[0xc0 + i * 4..0xc4 + i * 4].copy_from_slice(&word.to_le_bytes());
+    }
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("slot-memory-test.gba");
+    std::fs::write(&path, &rom).unwrap();
+    let mut out = [0];
+    assert_eq!(core.read_memory(0x02000000, &mut out), 0);
+    for expected in [0x12, 0x56] {
+        rom[0xc8] = expected;
+        std::fs::write(&path, &rom).unwrap();
+        core.load(&path).unwrap();
+        for _ in 0..10 {
+            core.run_frame(ButtonMask::default());
+        }
+        assert_eq!(core.read_memory(0x02000000, &mut out), 1);
+        assert_eq!(out, [expected]);
+        assert_eq!(core.read_memory(0x03000000, &mut out), 1);
+        assert_eq!(out, [0x34]);
+        assert_eq!(core.read_memory(0x03008000, &mut out), 1);
+        assert_eq!(out, [0x34]);
+        assert_eq!(core.read_memory(0x01000000, &mut out), 0);
+    }
+}

@@ -233,6 +233,7 @@ fn up_and_down_move_the_bar_and_wrap_at_the_ends() {
         QuickRow::Screen,
         QuickRow::Game,
         QuickRow::Controls,
+        QuickRow::AchievementSettings,
         QuickRow::About,
         QuickRow::General,
     ] {
@@ -1320,7 +1321,10 @@ fn gba_frames_from_the_card_show_only_on_a_four_by_three_panel() {
     std::fs::write(d.path().join("Bezels/GBA/Classic.png"), b"png").unwrap();
     assert!(a.bezel_files(Platform::Gba).is_empty());
     a.set_panel((640, 480));
-    assert_eq!(a.bezel_files(Platform::Gba), vec!["Classic.png".to_string()]);
+    assert_eq!(
+        a.bezel_files(Platform::Gba),
+        vec!["Classic.png".to_string()]
+    );
     open_at(&mut a, QuickRow::GbaBezel);
     press(&mut a, Btn::Right);
     assert_eq!(

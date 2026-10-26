@@ -8,6 +8,8 @@ use crate::{CartFace, QuickRow};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Toast {
+    AchievementUnlocked,
+    AchievementsStopped,
     StateSaved,
     StateLoaded,
     ShotCaptured,
@@ -34,7 +36,7 @@ pub enum Toast {
 }
 
 impl Toast {
-    const FIXED: [Toast; 21] = [
+    const FIXED: [Toast; 23] = [
         Toast::StateSaved,
         Toast::StateLoaded,
         Toast::ShotCaptured,
@@ -56,6 +58,8 @@ impl Toast {
         Toast::CardRepairCharge,
         Toast::CardRepaired,
         Toast::CardRepairFailed,
+        Toast::AchievementUnlocked,
+        Toast::AchievementsStopped,
     ];
 
     pub fn all() -> Vec<Toast> {
@@ -80,7 +84,9 @@ impl Toast {
 
     pub fn icon(self) -> Option<Icon> {
         match self {
-            Toast::Duplicate(_) | Toast::ShotFailed => Some(Icon::Alert),
+            Toast::Duplicate(_) | Toast::ShotFailed | Toast::AchievementsStopped => {
+                Some(Icon::Alert)
+            }
             Toast::ShotCaptured => Some(Icon::Camera),
             _ => None,
         }
@@ -96,7 +102,9 @@ impl Toast {
     pub fn hold_ms(self) -> crate::hud::Millis {
         match self {
             Toast::CardRepaired | Toast::CardRepairFailed => REPAIR_HOLD_MS,
-            Toast::Duplicate(_) => WARNING_HOLD_MS,
+            Toast::Duplicate(_) | Toast::AchievementUnlocked | Toast::AchievementsStopped => {
+                WARNING_HOLD_MS
+            }
             _ => crate::hud::HUD_MS,
         }
     }
@@ -122,6 +130,8 @@ impl Toast {
 
     fn fixed_text(self) -> &'static str {
         match self {
+            Toast::AchievementUnlocked => "Achievement Unlocked",
+            Toast::AchievementsStopped => "Achievements Unavailable",
             Toast::StateSaved => "State Saved",
             Toast::StateLoaded => "State Loaded",
             Toast::ShotCaptured => "Screenshot Captured",
@@ -178,6 +188,15 @@ struct Setting {
 }
 
 fn setting(toast: Toast) -> Setting {
+    if toast == Toast::AchievementUnlocked {
+        return Setting {
+            w: 512,
+            h: 78,
+            px: TOAST_PX,
+            min_px: TOAST_MIN_PX,
+            middle: 45.0,
+        };
+    }
     match toast.alarm() {
         true => Setting {
             w: ALARM_W,
@@ -369,6 +388,88 @@ mod tests {
             assert_eq!(layout.lines.len(), 1, "{t:?} wrapped onto a second line");
             let w = ink_width(t);
             assert!(w <= s.w, "{:?} is {w} px wide in a {} px box", t, s.w);
+        }
+    }
+}
+
+/// Expanded native toast: a small badge, a quiet heading, and a readable wrapped name.
+pub fn achievement_toast_face(notice: &crate::AchievementNotice) -> CartFace {
+    let s = setting(Toast::AchievementUnlocked);
+    let Some(font) = text::label_font() else {
+        return toast_face(Toast::AchievementUnlocked);
+    };
+    let room = s.w - 100;
+    let header = text::fit(font, "Achievement Unlocked", room as f32, 1, 18.0, 18.0);
+    let title = text::fit_box(font, &notice.title, room as f32, 50.0, 2, 22.0, 19.0);
+    // Arrange visible text bounds rather than centering each line in a separate
+    // tall box, so short names keep the heading and name comfortably together.
+    let bands: Vec<_> = [(&header, 26), (&title, 50)]
+        .into_iter()
+        .map(|(layout, height)| {
+            let words = text::coverage_left(room, height, layout);
+            let inked: Vec<_> = words
+                .iter()
+                .enumerate()
+                .filter(|(_, alpha)| **alpha > 0)
+                .map(|(i, _)| (i as u32 % room, i as u32 / room))
+                .collect();
+            let left = inked.iter().map(|(x, _)| *x).min().unwrap_or(0);
+            let top = inked.iter().map(|(_, y)| *y).min().unwrap_or(0);
+            let bottom = inked.iter().map(|(_, y)| *y).max().unwrap_or(top);
+            (words, left, top, bottom - top + 1)
+        })
+        .collect();
+    let gap = 8;
+    let height = bands.iter().map(|(_, _, _, h)| *h).sum::<u32>() + gap;
+    let mut y = s.h.saturating_sub(height) / 2;
+    let mut cov = vec![0u8; (s.w * s.h) as usize];
+    for (words, left, top, height) in bands {
+        for row in 0..height {
+            for x in left..room {
+                cov[((row + y) * s.w + 88 + x - left) as usize] =
+                    words[((row + top) * room + x) as usize];
+            }
+        }
+        y += height + gap;
+    }
+    let mut face = haloed(&cov, s.w, s.h, HUD_INK);
+    let badge = crate::achievements::badge_face_sized(notice.badge.as_ref(), true, 64);
+    for y in 0..64 {
+        for x in 0..64 {
+            let src = ((y * 64 + x) * 4) as usize;
+            let dst = (((y + 7 + HALO_PX) * face.w + x + 12 + HALO_PX) * 4) as usize;
+            face.rgba[dst..dst + 4].copy_from_slice(&badge.rgba[src..src + 4]);
+        }
+    }
+    face
+}
+
+#[cfg(test)]
+mod achievement_layout_tests {
+    use super::*;
+
+    #[test]
+    fn achievement_names_wrap_at_readable_size() {
+        let font = text::label_font().unwrap();
+        let room = setting(Toast::AchievementUnlocked).w - 100;
+        let layout = text::fit_box(
+            font,
+            "Yoshi's Island Defeated Without Taking Damage",
+            room as f32,
+            50.0,
+            2,
+            22.0,
+            19.0,
+        );
+        assert_eq!(layout.lines.len(), 2);
+        assert!(layout.px >= 19.0);
+        let coverage = text::coverage_left(room, 50, &layout);
+        for band in [0..25, 25..50] {
+            assert!(band
+                .into_iter()
+                .any(|y| coverage[(y * room as usize)..((y + 1) * room as usize)]
+                    .iter()
+                    .any(|a| *a > 0)));
         }
     }
 }

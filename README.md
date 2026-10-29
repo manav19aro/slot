@@ -1,84 +1,27 @@
-<div align="center">
+# slot — RetroAchievements fork
 
-<img src=".github/resources/banner.png" width="100%" alt="slot. A bespoke, Game Boy-centric frontend for the Anbernic RG SP.">
+The main purpose of this fork is to add **RetroAchievements support** to [slot](https://github.com/BrandonKowalski/slot), with offline achievement tracking and optional manual syncing.
 
-<a href="LICENSE"><img src="https://img.shields.io/github/license/BrandonKowalski/slot?style=for-the-badge&labelColor=242429&color=4d4d57" height="36" alt="License"></a>
-<a href="https://github.com/BrandonKowalski/slot/stargazers"><img src="https://img.shields.io/github/stars/BrandonKowalski/slot?style=for-the-badge&labelColor=242429&color=4d4d57" height="36" alt="Stars"></a>
-<a href="https://github.com/BrandonKowalski/slot/releases"><img src="https://img.shields.io/github/downloads/BrandonKowalski/slot/total?style=for-the-badge&labelColor=242429&color=4d4d57" height="36" alt="Downloads"></a>
-<a href="https://slot-cfw.fyi"><img src="https://img.shields.io/badge/Guide-slot--cfw.fyi-4d4d57?style=for-the-badge&labelColor=242429" height="36" alt="Guide"></a>
-<a href="CHANGELOG.md"><img src="https://img.shields.io/badge/Changelog-4d4d57?style=for-the-badge&labelColor=242429" height="36" alt="Changelog"></a>
+## RetroAchievements features
 
-</div>
+- Download achievement sets and badge images directly on the handheld, for one game or all compatible games.
+- Earn achievements offline, with unlock banners, achievement artwork, and progress indicators where supported.
+- Browse achievements from the in-game menu or by pressing **Select** on a game on the home screen.
+- Choose **Local** mode for offline tracking, or **Sync Enabled** for manual uploads and downloads of account progress. Sync runs only when requested, and failed uploads are kept for retry.
+- Turn achievements off entirely while preserving downloaded sets and earned progress.
 
----
+Achievement support currently covers **single-player GBA games using mGBA**, in casual/softcore mode.
 
-# What is slot?
+## Getting started
 
-A bespoke, Game Boy-centric frontend for the Anbernic RG SP.
+Save Wi-Fi details under **General → Wi-Fi** and sign in under **Achievements → RetroAchievements Login**. Download achievement sets from the Achievements settings or an individual game's achievement screen.
 
-Has support for GBA, GBC, and GB titles only.
+Once downloaded, achievement sets work offline. In **Sync Enabled** mode, press **Sync** to upload local unlocks and import achievements already earned on your account.
 
-> [!IMPORTANT]
-> ROMs must be unzipped. slot does not read `.zip` or `.7z` files.
+Achievement sets, badge images, progress, upload receipts, and achievement preferences live in the SD card's `Achievements/` folder. Copy the entire folder to transfer them to another device or fresh installation using the same ROMs. Login credentials and Wi-Fi settings are stored separately.
 
-A full user guide can be found at [slot-cfw.fyi](https://slot-cfw.fyi).
+## Original project
 
-Release notes can be found in the [changelog](CHANGELOG.md).
+The original slot README is preserved in [source-readme.md](source-readme.md). Refer to it for the original project's overview, supported devices, setup, and documentation links.
 
----
-
-# What does it look like?
-
-<p align="center">
-<img src=".github/resources/screenshots/carousel.gif" width="48%" alt="Scrolling the cart carousel across the Game Boy Advance, Game Boy and Game Boy Color shelves">
-<img src=".github/resources/screenshots/core-picker.gif" width="48%" alt="Flipping a cart to its circuit board to choose mGBA or gpSP">
-</p>
-
-<p align="center">
-<img src=".github/resources/screenshots/link.gif" width="96.5%" alt="Two SPs racing in Mario Kart over the emulated link">
-</p>
-
----
-
-# Supported Devices
-
-| Device             | Supported                                    | Since Version |
-|--------------------|----------------------------------------------|---------------|
-| Anbernic RG SP     | Yes                                          | Always        |
-| Anbernic RG34XX    | Yes                                          | 1.4.0         |
-| Anbernic RG34XXSP  | Yes                                          | 1.4.0         |
-| Anbernic RG35XXSP  | Yes                                          | 1.5.0         |
-| Anbernic 35XX Plus | Yes                                          | 1.5.0         |
-| Anbernic RG28XX    | Yes                                          | 1.6.0         |
-| Anbernic RG35XX-H  | Yes                                          | 1.7.0         |
-
-If you have one of the untested devices, or have tried slot on a device not listed,
-please [open an issue on GitHub](https://github.com/BrandonKowalski/slot/issues) and let me know how it went.
-
----
-
-# AI Disclosure
-
-The Rust frontend, and the SVGs on [slot-cfw.fyi](https://slot-cfw.fyi), were put together by Claude.
-I reviewed everything that was produced. All documentation is 100% free-range, meatbag prose.
-
-My goal with this project was to recreate the feeling of playing my GBA SP in the back seat as a kid,
-but with a few modern creature comforts.
-
-Nothing about this project is exciting or groundbreaking from a technological perspective, and as a
-result, I delegated the glue code. mGBA and gpSP have been around forever and are the true stars of
-this show. The incredible skeuomorphic art is the work of [Markus](https://github.com/MarkusMaribu), an
-artist who saw the bare-bones version and offered to dress it up.
-
-I understand if my use of AI is a dealbreaker for you. Just know it's the least interesting part of
-what's here.
-
-Figured I should share the end result of all the wasted water. ✌🏻
-
----
-
-# Spread Joy!
-
-I've spent a lot of time building slot.
-
-If you enjoy using it and feel inclined to pay it forward, go do something nice for someone! ❤️
+All credit for the original frontend goes to [BrandonKowalski/slot](https://github.com/BrandonKowalski/slot). This fork retains the project's [license](LICENSE).

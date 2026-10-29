@@ -264,14 +264,25 @@ fn achievements_can_be_disabled_without_losing_mode_or_progress() {
     let mut session = Session::boot_with(directory.path().into(), Box::new(StubSink::new()));
     open_setting(&mut session, QuickRow::AchievementEnabled);
     assert!(!session.app().achievements_enabled());
-    assert_eq!(session.app().quick_value(QuickRow::AchievementEnabled), Some(QuickValue::Off));
-    assert_eq!(QuickRow::AchievementEnabled.shown(&session.app().hidden_rows()), [QuickRow::AchievementEnabled]);
-    assert!(session.app().in_game_hidden().contains(&QuickRow::Achievements));
+    assert_eq!(
+        session.app().quick_value(QuickRow::AchievementEnabled),
+        Some(QuickValue::Off)
+    );
+    assert_eq!(
+        QuickRow::AchievementEnabled.shown(&session.app().hidden_rows()),
+        [QuickRow::AchievementEnabled]
+    );
+    assert!(session
+        .app()
+        .in_game_hidden()
+        .contains(&QuickRow::Achievements));
     assert!(!mode::enabled(directory.path()).unwrap());
     assert_eq!(mode::read(directory.path()).unwrap(), Mode::SyncEnabled);
     session.app_mut().apply(slot_input::Action::GbaDown(Btn::B));
     session.app_mut().apply(slot_input::Action::GbaDown(Btn::B));
-    session.app_mut().apply(slot_input::Action::GbaDown(Btn::Select));
+    session
+        .app_mut()
+        .apply(slot_input::Action::GbaDown(Btn::Select));
     session.update(0.016);
     assert!(session.app().achievement_view().is_none());
     let mut rebooted = Session::boot_with(directory.path().into(), Box::new(StubSink::new()));

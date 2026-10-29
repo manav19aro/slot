@@ -103,7 +103,11 @@ pub enum Outcome {
     Login,
     All(BatchSummary),
     SyncedGame(download::Imported),
-    SyncedAll { imported: usize, games: usize, summary: download::SyncSummary },
+    SyncedAll {
+        imported: usize,
+        games: usize,
+        summary: download::SyncSummary,
+    },
 }
 pub enum Progress {
     At(String),

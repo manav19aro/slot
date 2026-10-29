@@ -230,7 +230,17 @@ pub fn achievement_face(view: &AchievementView) -> CartFace {
                 earned_ink,
             );
             if let Some(progress) = measured {
-                label(&mut rgba, &format!("Progress: {progress}"), 32, 394, 576, 30, 21.0, 1, quick_menu::DIM_INK);
+                label(
+                    &mut rgba,
+                    &format!("Progress: {progress}"),
+                    32,
+                    394,
+                    576,
+                    30,
+                    21.0,
+                    1,
+                    quick_menu::DIM_INK,
+                );
             }
         }
     } else {

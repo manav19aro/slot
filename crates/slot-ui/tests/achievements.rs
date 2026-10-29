@@ -15,11 +15,7 @@ fn view() -> AchievementView {
                 },
                 description: "Mount a Green Yoshi".into(),
                 points: 2,
-                status: if i == 0 {
-                    "Unlocked"
-                } else {
-                    "Locked"
-                },
+                status: if i == 0 { "Unlocked" } else { "Locked" },
                 earned: i == 0,
             })
             .collect(),
@@ -129,5 +125,5 @@ fn measured_values_appear_only_in_locked_achievement_details() {
     view.rows[1].earned = true;
     let earned = achievement_face(&view);
     view.rows[1].progress = Some("12/50".into());
-    assert_eq!(earned.rgba,achievement_face(&view).rgba);
+    assert_eq!(earned.rgba, achievement_face(&view).rgba);
 }

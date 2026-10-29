@@ -398,10 +398,13 @@ fn measured_snapshot_works_while_paused_without_reading_core_memory() {
     wait(|| reads.load(Ordering::Relaxed) > 3);
     pause(&emu);
     let before = reads.load(Ordering::Relaxed);
-    let values = emu.achievement_progress().recv_timeout(Duration::from_secs(2)).unwrap();
-    assert_eq!(values.len(),1);
-    assert_eq!(values[0].0,42);
+    let values = emu
+        .achievement_progress()
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap();
+    assert_eq!(values.len(), 1);
+    assert_eq!(values[0].0, 42);
     assert!(values[0].1.ends_with("/200"));
-    assert_eq!(reads.load(Ordering::Relaxed),before);
+    assert_eq!(reads.load(Ordering::Relaxed), before);
     assert!(emu.take_achievement_events().is_empty());
 }

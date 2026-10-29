@@ -122,7 +122,10 @@ impl CartFaces {
         self.asked.retain(|w| (w.shelf, w.index) != key);
         // Filtering can move a different game into this slot while a worker
         // is building the old label. Discard that result and request it again.
-        if !app.face_cart(key.0, key.1).is_some_and(|current| current.platform == cart.platform && current.rom == cart.rom) {
+        if !app
+            .face_cart(key.0, key.1)
+            .is_some_and(|current| current.platform == cart.platform && current.rom == cart.rom)
+        {
             return;
         }
         let tex = self.texture(compositor, &face);

@@ -24,8 +24,8 @@ pub mod crash;
 pub mod crash {
     pub fn install() {}
 }
-pub mod drc;
 mod download_job;
+pub mod drc;
 pub mod emu;
 pub mod face_builder;
 pub mod frames;

@@ -114,7 +114,10 @@ impl AchievementSession {
     }
 
     pub(crate) fn measured_progress(&self) -> Vec<(u32, String)> {
-        self.runtime.as_ref().map(|runtime| runtime.measured_progress()).unwrap_or_default()
+        self.runtime
+            .as_ref()
+            .map(|runtime| runtime.measured_progress())
+            .unwrap_or_default()
     }
 
     pub(crate) fn active(&self) -> bool {

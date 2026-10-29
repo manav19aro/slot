@@ -41,7 +41,10 @@ pub struct Session {
     driven: bool,
     download: Option<crate::download_job::Job>,
     pending_measurements: Option<(PathBuf, MeasurementReply)>,
-    pending_import: Option<(std::sync::mpsc::Receiver<Result<usize, String>>, slot_achievements::download::SyncSummary)>,
+    pending_import: Option<(
+        std::sync::mpsc::Receiver<Result<usize, String>>,
+        slot_achievements::download::SyncSummary,
+    )>,
 }
 
 impl Session {
@@ -100,6 +103,10 @@ impl Session {
         self.sink.ring()
     }
 
+    pub fn close_audio(&mut self) {
+        self.sink.close();
+    }
+
     pub fn rumble(&mut self, strength: u16) {
         if strength == self.motor {
             return;
@@ -138,7 +145,7 @@ impl Session {
     pub fn step_emulator(&self, present: Duration, timeout: Duration) -> bool {
         self.emu.as_ref().is_some_and(|emu| {
             emu.tick(present);
-            emu.wait_frame(timeout)
+            !emu.wait_frame(timeout) && emu.locked()
         })
     }
 
@@ -320,17 +327,27 @@ impl Session {
         if let Some((rom, rx)) = self.pending_measurements.take() {
             match rx.try_recv() {
                 Ok(values) => {
-                    if self.app.achievement_cart().is_some_and(|cart| cart.rom == rom) && !matches!(self.app.phase(), Phase::Shelf) {
+                    if self
+                        .app
+                        .achievement_cart()
+                        .is_some_and(|cart| cart.rom == rom)
+                        && !matches!(self.app.phase(), Phase::Shelf)
+                    {
                         if let Some(current) = self.app.achievement_view() {
                             let mut view = current.clone();
                             for row in &mut view.rows {
-                                row.progress = values.iter().find(|(id,_)| *id == row.id).map(|(_,value)| value.clone());
+                                row.progress = values
+                                    .iter()
+                                    .find(|(id, _)| *id == row.id)
+                                    .map(|(_, value)| value.clone());
                             }
                             self.app.set_achievement_view(view);
                         }
                     }
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => self.pending_measurements = Some((rom, rx)),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.pending_measurements = Some((rom, rx))
+                }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
             }
         }
@@ -353,6 +370,7 @@ impl Session {
                 }
             }
         }
+        self.sink.hold_open(self.app.headphones());
         if let Some(emu) = &self.emu {
             emu.set_volume(self.app.output_volume());
         }
@@ -380,6 +398,13 @@ impl Session {
                     emu.set_option(key, value);
                     recoloured = true;
                 }
+            }
+        }
+        if let Some(blending) = self.app.take_blending() {
+            if let Some(emu) = &self.emu {
+                let (key, value) = crate::core::blend_option(self.app.core(), blending);
+                emu.set_option(key, value);
+                recoloured = true;
             }
         }
         if recoloured && self.held() && !self.app.link_active() {
@@ -465,13 +490,19 @@ impl Session {
 
     fn request_achievement_measurements(&mut self) {
         self.pending_measurements = None;
-        if matches!(self.app.phase(), Phase::Shelf) { return; }
+        if matches!(self.app.phase(), Phase::Shelf) {
+            return;
+        }
         if let (Some(emu), Some(cart)) = (&self.emu, self.app.achievement_cart()) {
             self.pending_measurements = Some((cart.rom.clone(), emu.achievement_progress()));
         }
     }
 
-    fn finish_game_import(&mut self, added: usize, summary: slot_achievements::download::SyncSummary) {
+    fn finish_game_import(
+        &mut self,
+        added: usize,
+        summary: slot_achievements::download::SyncSummary,
+    ) {
         if self.app.achievement_download().is_none() {
             return;
         }
@@ -487,16 +518,17 @@ impl Session {
     }
 
     fn update_download(&mut self) {
-        if let Some(reply) = self
-            .pending_import
-            .as_ref()
-            .and_then(|(rx, summary)| match rx.try_recv() {
-                Ok(result) => Some((result, *summary)),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    Some((Err("Could not update running-game progress".into()), *summary))
-                }
-                _ => None,
-            })
+        if let Some(reply) =
+            self.pending_import
+                .as_ref()
+                .and_then(|(rx, summary)| match rx.try_recv() {
+                    Ok(result) => Some((result, *summary)),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => Some((
+                        Err("Could not update running-game progress".into()),
+                        *summary,
+                    )),
+                    _ => None,
+                })
         {
             self.pending_import = None;
             match reply.0 {
@@ -626,7 +658,8 @@ impl Session {
                             let summary = imported.summary;
                             if let Some(emu) = &self.emu {
                                 self.app.download_status("Saving local progress".into());
-                                self.pending_import = Some((emu.import_achievements(imported), summary));
+                                self.pending_import =
+                                    Some((emu.import_achievements(imported), summary));
                             } else {
                                 match imported.save(&self.root) {
                                     Ok(added) => self.finish_game_import(added, summary),
@@ -636,12 +669,17 @@ impl Session {
                                 }
                             }
                         }
-                        Ok(crate::download_job::Outcome::SyncedAll { imported, games, summary }) => {
+                        Ok(crate::download_job::Outcome::SyncedAll {
+                            imported,
+                            games,
+                            summary,
+                        }) => {
                             if let Some(current) = self.app.achievement_download() {
                                 let mut view = current.clone();
                                 view.status = None;
                                 view.completed = true;
-                                view.error = format!("{games} games: {}", summary.message(imported));
+                                view.error =
+                                    format!("{games} games: {}", summary.message(imported));
                                 self.app.set_achievement_download(Some(view));
                             }
                         }
@@ -749,7 +787,7 @@ impl Session {
 
     fn sync_speed(&self) {
         if let Some(emu) = &self.emu {
-            emu.set_fast_steps(u32::from(self.app.ff_speed()));
+            emu.set_fast_quarters(u32::from(self.app.ff_speed()));
             emu.set_ff_sound(self.app.ff_sound());
             emu.set_speed(
                 if self.inserting()
@@ -832,6 +870,7 @@ impl Session {
         let player = self.app.link_player();
         let chosen = self.app.gb_colors();
         let colour = self.app.colour_correction_for(platform);
+        let blending = self.app.blending_for(platform);
         let join = std::thread::Builder::new()
             .name("slot-open".into())
             .spawn(move || {
@@ -841,7 +880,10 @@ impl Session {
                 };
                 launch("resume state read");
                 let palette = crate::core::palette_for(chosen, platform, &rom, player);
-                let opened = open_core(&root, core, platform, serial, colour, palette, player);
+                let mut opened = open_core(
+                    &root, core, platform, serial, colour, blending, palette, player,
+                );
+                crate::core::apply_game_boy_player(&mut *opened.core, core, platform, &rom);
                 launch("core opened");
                 let achievement_pack = if slot_achievements::mode::enabled(&root).unwrap_or(false)
                     && opened.named

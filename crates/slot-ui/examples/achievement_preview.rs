@@ -21,8 +21,8 @@ fn main() {
     ] {
         let earned = view.rows.is_empty();
         view.rows.push(AchievementRow {
-                id: 0,
-                progress: None,
+            id: 0,
+            progress: None,
             badge: cache.as_ref().and_then(|cache| {
                 let (pixels, w, h) = slot_ui::decode_png(
                     &std::path::Path::new(cache).join(format!("{}.png", badges[view.rows.len()])),
@@ -40,11 +40,7 @@ fn main() {
             title: title.into(),
             description: description.into(),
             points,
-            status: if earned {
-                "Unlocked"
-            } else {
-                "Locked"
-            },
+            status: if earned { "Unlocked" } else { "Locked" },
             earned,
         });
     }

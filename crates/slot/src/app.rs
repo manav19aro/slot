@@ -298,6 +298,7 @@ pub enum Phase {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Rack {
     Recents,
+    Favorites,
     Of(Platform),
 }
 
@@ -305,13 +306,14 @@ impl Rack {
     fn platform(self) -> Option<Platform> {
         match self {
             Rack::Of(p) => Some(p),
-            Rack::Recents => None,
+            Rack::Recents | Rack::Favorites => None,
         }
     }
 
     fn key(self) -> String {
         match self {
             Rack::Recents => "recents".into(),
+            Rack::Favorites => "favorites".into(),
             Rack::Of(p) => p.dir_name().to_ascii_lowercase(),
         }
     }
@@ -319,18 +321,18 @@ impl Rack {
     fn name(self) -> &'static str {
         match self {
             Rack::Recents => "Recents",
+            Rack::Favorites => "Favorites",
             Rack::Of(p) => p.name(),
         }
     }
 }
 
 const RECENTS_AT: usize = 0;
+const FAVORITES_AT: usize = 1;
 
 pub struct App {
     phase: Phase,
     shelves: Vec<(Rack, Shelf)>,
-    library_carts: Vec<Cart>,
-    favorites_only: bool,
     shelf_at: usize,
     orphaned: Vec<TexId>,
     play_held: Option<Millis>,
@@ -494,7 +496,7 @@ pub struct FaceWant {
 }
 
 fn shelves_of(carts: Vec<Cart>) -> Vec<(Rack, Shelf)> {
-    let mut rows: Vec<(Rack, Vec<Cart>)> = [Rack::Recents]
+    let mut rows: Vec<(Rack, Vec<Cart>)> = [Rack::Recents, Rack::Favorites]
         .into_iter()
         .chain(Platform::ALL.iter().map(|p| Rack::Of(*p)))
         .map(|r| (r, Vec::new()))
@@ -527,7 +529,6 @@ fn shift_down(draws: &mut [Draw], dy: f32) {
 impl App {
     pub fn new(carts: Vec<Cart>) -> Self {
         let shelves = shelves_of(carts);
-        let library_carts = shelves.iter().filter(|(rack,_)| rack.platform().is_some()).flat_map(|(_,shelf)| shelf.carts.iter().cloned()).collect();
         let shelf_at = shelves
             .iter()
             .position(|(_, s)| !s.carts.is_empty())
@@ -551,8 +552,6 @@ impl App {
             delete_shot_text: None,
             phase: Phase::Shelf,
             shelves,
-            library_carts,
-            favorites_only: false,
             shelf_at,
             orphaned: Vec::new(),
             play_held: None,
@@ -710,6 +709,7 @@ impl App {
         app.shortcuts = read_shortcuts(root);
         app.controls = read_controls(root);
         app.restock_recents();
+        app.restock_favorites();
         if let Some((at, i)) = app.remembered_seat() {
             app.shelf_at = at;
             app.shelves[at].1.select(i);
@@ -1680,11 +1680,6 @@ impl App {
     pub fn slot_text(&self) -> Option<String> {
         match self.slot_letter {
             Some(letter) => Some(letter.to_string()),
-            None if self.favorites_only => Some(if self.shelf().carts.is_empty() {
-                "No favorites".into()
-            } else {
-                format!("{} · Favorites", self.shelves[self.shelf_at].0.name())
-            }),
             None => self.shelf_platform_name().map(str::to_string),
         }
     }
@@ -1734,7 +1729,10 @@ impl App {
     }
 
     pub fn carts(&self) -> impl Iterator<Item = &Cart> {
-        self.library_carts.iter()
+        self.shelves
+            .iter()
+            .filter(|(r, _)| r.platform().is_some())
+            .flat_map(|(_, shelf)| shelf.carts.iter())
     }
 
     pub fn seated_cart(&self) -> Option<&Cart> {
@@ -2826,7 +2824,6 @@ impl App {
                 _ if self.core_picker.is_some() => self.core_picker_input(action),
                 Action::PreviousShelf => self.switch_shelf(-1),
                 Action::NextShelf => self.switch_shelf(1),
-                Action::GbaDown(Btn::X) if self.core_picker.is_none() => self.toggle_favorites_filter(),
                 Action::Favorite => self.toggle_favorite(),
                 Action::GbaDown(Btn::Up) => self.jump_letter(-1),
                 Action::GbaDown(Btn::Down) => self.jump_letter(1),
@@ -4013,13 +4010,32 @@ impl App {
                 .iter()
                 .filter_map(|r| {
                     self.carts()
-                        .find(|c| c.platform == r.platform && c.stem == r.stem && (!self.favorites_only || self.state.is_favorite(c.platform, &c.stem)))
+                        .find(|c| c.platform == r.platform && c.stem == r.stem)
                 })
                 .cloned()
                 .collect(),
             false => Vec::new(),
         };
         self.restock(RECENTS_AT, carts);
+        self.mark_stars();
+    }
+
+    fn restock_favorites(&mut self) {
+        let mut carts: Vec<Cart> = self
+            .carts()
+            .filter(|c| self.state.is_favorite(c.platform, &c.stem))
+            .cloned()
+            .collect();
+        carts.sort_by(|a, b| {
+            (slot_store::sort_key(&a.stem), a.platform as u8)
+                .cmp(&(slot_store::sort_key(&b.stem), b.platform as u8))
+        });
+        let index = self.shelves[FAVORITES_AT].1.index;
+        self.restock(FAVORITES_AT, carts);
+        let shelf = &mut self.shelves[FAVORITES_AT].1;
+        if self.shelf_at == FAVORITES_AT && !shelf.carts.is_empty() {
+            shelf.select(index.min(shelf.carts.len() - 1));
+        }
         self.mark_stars();
     }
 
@@ -4036,42 +4052,9 @@ impl App {
         let old = self.shelves[at].1.restock(carts);
         self.orphaned.extend(old);
         let empty = self.shelves[at].1.carts.is_empty();
-        if self.shelf_at == at && empty && !self.favorites_only {
+        if self.shelf_at == at && empty {
             self.shelf_at = self.next_shelf(1).unwrap_or(0);
         }
-    }
-
-    pub fn favorites_only(&self) -> bool { self.favorites_only }
-
-    fn refresh_favorites_filter(&mut self) {
-        for at in 0..self.shelves.len() {
-            let Some(platform) = self.shelves[at].0.platform() else { continue; };
-            let shelf = &self.shelves[at].1;
-            let selected = shelf.carts.get(shelf.index).map(|cart| cart.stem.clone());
-            let index = shelf.index;
-            let carts = self.library_carts.iter().filter(|cart| cart.platform == platform && (!self.favorites_only || self.state.is_favorite(cart.platform, &cart.stem))).cloned().collect();
-            self.restock(at, carts);
-            let shelf = &mut self.shelves[at].1;
-            if !shelf.carts.is_empty() {
-                let index = selected.and_then(|stem| shelf.carts.iter().position(|cart| cart.stem == stem)).unwrap_or(index.min(shelf.carts.len()-1));
-                shelf.select(index);
-            }
-        }
-        self.restock_recents();
-        self.mark_stars();
-        self.shelf_platform = slot_ui::Printed::default();
-        self.shelf_title = slot_ui::Printed::default();
-        self.slot_letter = None;
-        self.shelf_named = None;
-        self.name_pending = true;
-    }
-
-    fn toggle_favorites_filter(&mut self) {
-        self.shelf_mut().release_hold();
-        self.held_dir = None;
-        self.play_held = None;
-        self.favorites_only = !self.favorites_only;
-        self.refresh_favorites_filter();
     }
 
     fn toggle_favorite(&mut self) {
@@ -4081,7 +4064,7 @@ impl App {
         let (platform, stem) = (cart.platform, cart.stem.clone());
         self.state.toggle_favorite(platform, &stem);
         let shelf_at = self.shelf_at;
-        if self.favorites_only { self.refresh_favorites_filter(); } else { self.mark_stars(); }
+        self.restock_favorites();
         if self.shelf_at != shelf_at {
             self.shelf_platform = slot_ui::Printed::default();
             self.slot_letter = None;
